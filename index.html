@@ -25,11 +25,11 @@
     :root {
       /* Ajanhetki accent + the filter sheet's "Palauta" button. Change here to
          retune both. NOTE: this is deliberately separate from the paid-area
-         blue (#1266f1) and free-area purple (#7F1F89), which must keep matching
+         blue (#5c7ad6) and free-area green (#7ac66d), which must keep matching
          the map's colours. */
       /* Accent = oranssi. Ohjaa Ajanhetki-pillerin aikaa/ikonia, "Palauta
          nykyhetkeen" -tekstiä ja Palauta-pilleriä. Erillinen kartan maksullisen
-         alueen sinisestä (#1266f1) — kartan värit eivät muutu. */
+         alueen sinisestä (#5c7ad6) — kartan värit eivät muutu. */
       --tp-accent: #ca4000;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -2024,14 +2024,13 @@
     #ref-legend { margin-top: 16px; display: grid; grid-template-columns: auto max-content auto; column-gap: 8px; row-gap: 9px; align-items: center; justify-content: start; font-size: 12px; color: #555; font-family: Arial, sans-serif; }
     .ref-legend-row { display: contents; }
     .ref-legend-row .ah-bullet { margin-top: 0; }
-    /* Legend swatches mirror the map's actual base-layer rendering:
-       fill = master-poly-fill colours at fill-opacity 0.20, outline =
-       master-poly-line colours at line-opacity 0.55 and 1px width (the map's
-       line-width is 1.0). 2:1 box; border-box keeps the OUTER size at exactly
-       30×15 so the ratio holds with the border included. */
-    .ref-legend-box { flex-shrink: 0; box-sizing: border-box; width: 30px; height: 15px; border-radius: 3px; }
-    .ref-legend-box.paid { background: rgba(18, 102, 241, 0.20); border: 1px solid rgba(11, 73, 208, 0.55); }
-    .ref-legend-box.free { background: rgba(127, 31, 137, 0.20); border: 1px solid rgba(97, 24, 104, 0.55); }
+    /* Legendan laatikot vastaavat kartan todellista piirtoa: peittävä täyttö
+       (maksullinen #5c7ad6 / ilmainen #7ac66d), 1 px musta reunaviiva ja
+       pillerin pyöristys. 2:1 laatikko; border-box pitää ULKOmitan tarkasti
+       30×15:ssä, joten suhde säilyy reunaviivan kanssa. */
+    .ref-legend-box { flex-shrink: 0; box-sizing: border-box; width: 30px; height: 15px; border-radius: 999px; }
+    .ref-legend-box.paid { background: #5c7ad6; border: 1px solid #000000; }
+    .ref-legend-box.free { background: #7ac66d; border: 1px solid #000000; }
 
     #slider-label { font-size: 15px; color: #222; margin-bottom: 10px; text-align: center; }
     #slider-value { font-weight: bold; color: #0C0243; font-size: 17px; }
@@ -3359,8 +3358,8 @@
        At the medium size the card is simply short enough to clip them away. */
     .ajanhetki-float-hint { margin-top: 11px; font-size: 12px; color: #9a9a9a; line-height: 1.45; font-family: Arial, sans-serif; opacity: 1; transition: opacity .25s ease; }
     #ajanhetki-card.size-medium .ajanhetki-float-hint { opacity: 0; }
-    .ajanhetki-float-hint .ah-free { text-decoration: underline; text-decoration-color: #7F1F89; text-decoration-thickness: 2px; text-underline-offset: 2px; }
-    .ajanhetki-float-hint .ah-paid { text-decoration: underline; text-decoration-color: #1266f1; text-decoration-thickness: 2px; text-underline-offset: 2px; }
+    .ajanhetki-float-hint .ah-free { text-decoration: underline; text-decoration-color: #7ac66d; text-decoration-thickness: 2px; text-underline-offset: 2px; }
+    .ajanhetki-float-hint .ah-paid { text-decoration: underline; text-decoration-color: #5c7ad6; text-decoration-thickness: 2px; text-underline-offset: 2px; }
     .ah-hint-row { display: flex; align-items: flex-start; gap: 7px; }
     .ah-hint-row + .ah-hint-row { margin-top: 6px; }
     .ah-bullet { flex-shrink: 0; width: 4px; height: 4px; border-radius: 50%; background: #333; margin-top: 5px; }
@@ -5557,6 +5556,152 @@
 
   <script>
     console.log('BUILD: 2026-07-08 zoom13-kynnys');
+
+    // ══ PILLERIMUOTOISET PYSÄKÖINTIALUEET ══════════════════════════════
+    // Kartalla piirrettävien alueiden kapeat päädyt pyöristetään puoliympyröiksi,
+    // jolloin pitkänomaisesta suorakulmiosta tulee pilleri (stadion-muoto).
+    // Muunnos tehdään VAIN piirtoa varten — tietokantaan tallennettu
+    // polygon_coordinates säilyy ennallaan, samoin editorin yhdistämislogiikan
+    // käyttämä alkuperäinen geometria.
+    //
+    // Menetelmä: alueen minimipinta-alaisesta suunnatusta rajauslaatikosta
+    // (OBB) otetaan pitkä akseli u, pituus L ja leveys W. Pilleri = W-levyinen
+    // "makkara" joka on SISÄLLÄ alkuperäisessä laatikossa: suora osuus
+    // pituudeltaan L−W ja molemmissa päissä puoliympyrä säteellä W/2. Alueen
+    // ulkomitat eli pituus ja leveys eivät siis muutu, vain päädyt pyöristyvät.
+    // Laskenta tehdään Mercator-metreissä, joka on konforminen → ympyrä pysyy
+    // ruudulla ympyränä ja pituus/leveys-suhde säilyy oikeana.
+    const PILL_SHAPE = {
+      enabled:   true,      // false = koko muunnos pois, alueet piirtyvät kuten ennen
+      arcSteps:  14,        // segmenttejä per puoliympyrä (isompi = sileämpi, raskaampi)
+      minAspect: 1.5,       // pituus/leveys jonka ALLE jäävät alueet piirretään ennallaan.
+                            // Neliömäisellä kentällä ei ole "kapeaa päätyä", ja pilleri
+                            // muuttaisi sen ympyräksi. Arvo 1.0 = pilleröi kaikki.
+      minFill:   0.60,      // alueen pinta-ala / rajauslaatikon pinta-ala. Alle tämän muoto
+                            // ei ole suora suikale (mutkitteleva/L-kirjaimen muotoinen) →
+                            // jätetään ennalleen ettei oikea muoto katoa.
+      maxWidthM: Infinity   // kapeamman mitan yläraja metreinä; Infinity = ei rajaa
+    };
+    const _PILL_R = 6378137;
+    const _pillCache = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+    function _pillToMerc(ll) {
+      const lat = Math.max(-89.9, Math.min(89.9, ll[1])) * Math.PI / 180;
+      return [_PILL_R * ll[0] * Math.PI / 180,
+              _PILL_R * Math.log(Math.tan(Math.PI / 4 + lat / 2))];
+    }
+    function _pillToLngLat(p) {
+      return [p[0] / _PILL_R * 180 / Math.PI,
+              (2 * Math.atan(Math.exp(p[1] / _PILL_R)) - Math.PI / 2) * 180 / Math.PI];
+    }
+    // Konveksi peite (Andrew monotone chain)
+    function _pillHull(pts) {
+      const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      if (p.length < 3) return p;
+      const cr = (o, a, b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]);
+      const lo = [], up = [];
+      for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length-2], lo[lo.length-1], q) <= 0) lo.pop(); lo.push(q); }
+      for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cr(up[up.length-2], up[up.length-1], q) <= 0) up.pop(); up.push(q); }
+      lo.pop(); up.pop();
+      return lo.concat(up);
+    }
+    function _pillArea(pts) {
+      let a = 0;
+      for (let i = 0, n = pts.length; i < n; i++) {
+        const p = pts[i], q = pts[(i + 1) % n];
+        a += p[0] * q[1] - q[0] * p[1];
+      }
+      return Math.abs(a) / 2;
+    }
+    // Minimipinta-alainen suunnattu rajauslaatikko (rotating calipers)
+    function _pillMinRect(hull) {
+      let best = null;
+      for (let i = 0; i < hull.length; i++) {
+        const a = hull[i], b = hull[(i + 1) % hull.length];
+        let ex = b[0] - a[0], ey = b[1] - a[1];
+        const len = Math.hypot(ex, ey);
+        if (len < 1e-9) continue;
+        ex /= len; ey /= len;
+        let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+        for (const p of hull) {
+          const dx = p[0] - a[0], dy = p[1] - a[1];
+          const u = dx * ex + dy * ey, v = -dx * ey + dy * ex;
+          if (u < minU) minU = u; if (u > maxU) maxU = u;
+          if (v < minV) minV = v; if (v > maxV) maxV = v;
+        }
+        const w = maxU - minU, h = maxV - minV, area = w * h;
+        if (!best || area < best.area) {
+          const cu = (minU + maxU) / 2, cv = (minV + maxV) / 2;
+          best = { area, cx: a[0] + cu*ex - cv*ey, cy: a[1] + cu*ey + cv*ex, ex, ey, w, h };
+        }
+      }
+      return best;
+    }
+    // Yksi ulkorengas -> pillerirengas, tai null jos muunnosta ei tehdä.
+    function _pillRing(ring) {
+      if (!Array.isArray(ring) || ring.length < 4) return null;
+      const pts = ring.map(_pillToMerc);
+      const f = pts[0], l = pts[pts.length - 1];
+      if (Math.abs(f[0]-l[0]) < 1e-6 && Math.abs(f[1]-l[1]) < 1e-6) pts.pop();
+      if (pts.length < 3) return null;
+      const hull = _pillHull(pts);
+      if (hull.length < 3) return null;
+      const rect = _pillMinRect(hull);
+      if (!rect) return null;
+
+      let ux, uy, L, W;
+      if (rect.w >= rect.h) { ux = rect.ex;  uy = rect.ey; L = rect.w; W = rect.h; }
+      else                  { ux = -rect.ey; uy = rect.ex; L = rect.h; W = rect.w; }
+      if (!(W > 0.05) || !(L > 0.05)) return null;
+      if (L / W < PILL_SHAPE.minAspect) return null;
+      if (_pillArea(pts) / rect.area < PILL_SHAPE.minFill) return null;
+      if (PILL_SHAPE.maxWidthM !== Infinity) {
+        // Mercator-yksiköt ovat 1/cos(lat)-kertoimella liian isoja → skaalataan metreiksi
+        const latRad = _pillToLngLat([rect.cx, rect.cy])[1] * Math.PI / 180;
+        if (W * Math.cos(latRad) > PILL_SHAPE.maxWidthM) return null;
+      }
+
+      const r = W / 2;
+      const half = Math.max(0, L / 2 - r);          // 0 → pillerista tulee ympyrä
+      const ax = rect.cx - half*ux, ay = rect.cy - half*uy;
+      const bx = rect.cx + half*ux, by = rect.cy + half*uy;
+      const th = Math.atan2(uy, ux);
+      const N  = Math.max(3, PILL_SHAPE.arcSteps | 0);
+      const out = [];
+      const arc = (cx, cy, from) => {
+        for (let i = 0; i <= N; i++) {
+          const a = from + Math.PI * (i / N);
+          out.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
+        }
+      };
+      arc(bx, by, th - Math.PI/2);   // +u-pääty, vastapäivään
+      arc(ax, ay, th + Math.PI/2);   // -u-pääty
+      out.push(out[0].slice());
+      return out.map(_pillToLngLat);
+    }
+    // Julkinen apuri: Polygon / MultiPolygon -> pillerimuotoinen kopio.
+    // Palauttaa ALKUPERÄISEN objektin jos muunnosta ei tehdä (ei turhia kopioita).
+    function pillifyGeometry(geom) {
+      if (!PILL_SHAPE.enabled || !geom) return geom;
+      if (_pillCache && _pillCache.has(geom)) return _pillCache.get(geom);
+      let outGeom = geom;
+      try {
+        if (geom.type === 'Polygon') {
+          const r = _pillRing(geom.coordinates && geom.coordinates[0]);
+          if (r) outGeom = { type:'Polygon', coordinates:[r] };
+        } else if (geom.type === 'MultiPolygon') {
+          let changed = false;
+          const polys = (geom.coordinates || []).map(poly => {
+            const r = _pillRing(poly && poly[0]);
+            if (r) { changed = true; return [r]; }
+            return poly;
+          });
+          if (changed) outGeom = { type:'MultiPolygon', coordinates:polys };
+        }
+      } catch (e) { console.warn('pillifyGeometry epäonnistui:', e); outGeom = geom; }
+      if (_pillCache) { try { _pillCache.set(geom, outGeom); } catch (_) {} }
+      return outGeom;
+    }
+    // ═══════════════════════════════════════════════════════════════════
     // ── Lock screen orientation to portrait ────────────────────────────
     // Works reliably in PWA/standalone mode (when app is added to home screen).
     // Inside a regular browser tab, browsers restrict orientation lock — the
@@ -6559,7 +6704,7 @@
                      r.parking_type !== 'Pysäköintihalli')
         .map(r => ({ type:'Feature',
           properties:{ source: legacySourceFor(r.area_type, r.parking_type, r.max_hours) },
-          geometry: r.polygon_coordinates }));
+          geometry: pillifyGeometry(r.polygon_coordinates) }));
       return { type:'FeatureCollection', features };
     }
     function ensureExistingAreaLayers() {
@@ -8315,7 +8460,7 @@
       const rows = (typeof _lastMasterRows !== 'undefined' && _lastMasterRows) ? _lastMasterRows : [];
       return { type:'FeatureCollection', features: rows
         .filter(r => r.polygon_coordinates && (r.polygon_coordinates.type==='Polygon'||r.polygon_coordinates.type==='MultiPolygon') && r.parking_type !== 'Pysäköintihalli')
-        .map(r => ({ type:'Feature', properties:{ source: legacySourceFor(r.area_type, r.parking_type, r.max_hours) }, geometry: r.polygon_coordinates })) };
+        .map(r => ({ type:'Feature', properties:{ source: legacySourceFor(r.area_type, r.parking_type, r.max_hours) }, geometry: pillifyGeometry(r.polygon_coordinates) })) };
     }
     function adminSetMasterAreas() {
       if (!adminPreviewMap) return;
@@ -8921,15 +9066,15 @@
     }
 
     const SOURCE_STYLE = {
-      'community':           { fill:'#7F1F89', line:'#611868', label:'Yhteisön lisäämä alue' },
-      'hel_ilmainen_pitka':  { fill:'#7F1F89', line:'#611868', label:'Ilmainen pitkäaikainen pysäköinti' },
-      'hel_ilmainen_lyhyt':  { fill:'#7F1F89', line:'#611868', label:'Ilmainen lyhytaikainen pysäköinti' },
-      'hel_kertamaksu_1h':   { fill:'#1266f1', line:'#0B49D0', label:'Maksullinen pysäköinti (max. 1h)' },
-      'hel_kertamaksu_2h':   { fill:'#1266f1', line:'#0B49D0', label:'Maksullinen pysäköinti (max. 2h)' },
-      'hel_kertamaksu_4h':            { fill:'#1266f1', line:'#0B49D0', label:'Maksullinen pysäköinti (max. 4h)' },
-      'hel_maksullinen_ei_tunnusta':      { fill:'#1266f1', line:'#0B49D0', label:'Maksullinen pysäköinti (ilman tunnusta)' },
-      'hel_kertamaksu_1h_ei_tunnusta':          { fill:'#1266f1', line:'#0B49D0', label:'Kertamaksu max. 1h (ilman tunnusta)' },
-      'hel_sallittu_kiellon_ulkopuolella': { fill:'#7F1F89', line:'#611868', label:'Sallittu pysäköintikieltoajan ulkopuolella' },
+      'community':           { fill:'#7ac66d', line:'#000000', label:'Yhteisön lisäämä alue' },
+      'hel_ilmainen_pitka':  { fill:'#7ac66d', line:'#000000', label:'Ilmainen pitkäaikainen pysäköinti' },
+      'hel_ilmainen_lyhyt':  { fill:'#7ac66d', line:'#000000', label:'Ilmainen lyhytaikainen pysäköinti' },
+      'hel_kertamaksu_1h':   { fill:'#5c7ad6', line:'#000000', label:'Maksullinen pysäköinti (max. 1h)' },
+      'hel_kertamaksu_2h':   { fill:'#5c7ad6', line:'#000000', label:'Maksullinen pysäköinti (max. 2h)' },
+      'hel_kertamaksu_4h':            { fill:'#5c7ad6', line:'#000000', label:'Maksullinen pysäköinti (max. 4h)' },
+      'hel_maksullinen_ei_tunnusta':      { fill:'#5c7ad6', line:'#000000', label:'Maksullinen pysäköinti (ilman tunnusta)' },
+      'hel_kertamaksu_1h_ei_tunnusta':          { fill:'#5c7ad6', line:'#000000', label:'Kertamaksu max. 1h (ilman tunnusta)' },
+      'hel_sallittu_kiellon_ulkopuolella': { fill:'#7ac66d', line:'#000000', label:'Sallittu pysäköintikieltoajan ulkopuolella' },
     };
 
     // parking_master no longer stores a `source` column — it now uses the same
@@ -9008,7 +9153,7 @@
               valid_su_to: r.valid_su_to ?? '',
               ...validityProps(r)
             },
-            geometry: r.polygon_coordinates
+            geometry: pillifyGeometry(r.polygon_coordinates)
           }));
 
         const geojson = { type: 'FeatureCollection', features };
@@ -9029,39 +9174,33 @@
         map.addLayer({ id:'master-poly-fill', type:'fill', source:'master-polygons', minzoom:13,
           paint:{ 'fill-opacity': hlOpacity('baseFill'), 'fill-opacity-transition': { duration: 0 },
             'fill-color': ['match', ['get','source'],
-              'community',          '#7F1F89',
-              'hel_ilmainen_pitka', '#7F1F89',
-              'hel_ilmainen_lyhyt', '#7F1F89',
-              'hel_sallittu_kiellon_ulkopuolella', '#7F1F89',
-              'hel_kertamaksu_1h',  '#1266f1',
-              'hel_kertamaksu_2h',  '#1266f1',
-              'hel_kertamaksu_4h',  '#1266f1',
-              'hel_maksullinen_ei_tunnusta',        '#1266f1',
-              'hel_kertamaksu_1h_ei_tunnusta',      '#1266f1',
-              '#1266f1'
+              'community',          '#7ac66d',
+              'hel_ilmainen_pitka', '#7ac66d',
+              'hel_ilmainen_lyhyt', '#7ac66d',
+              'hel_sallittu_kiellon_ulkopuolella', '#7ac66d',
+              'hel_kertamaksu_1h',  '#5c7ad6',
+              'hel_kertamaksu_2h',  '#5c7ad6',
+              'hel_kertamaksu_4h',  '#5c7ad6',
+              'hel_maksullinen_ei_tunnusta',        '#5c7ad6',
+              'hel_kertamaksu_1h_ei_tunnusta',      '#5c7ad6',
+              '#5c7ad6'
             ]
           }
         });
-        // Base line layer
+        // Base line layer — 1 px musta reunaviiva kaikilla alueilla
         map.addLayer({ id:'master-poly-line', type:'line', source:'master-polygons', minzoom:13,
           paint:{ 'line-width': 1.0, 'line-opacity': hlOpacity('baseLine'),
-            'line-color': ['match', ['get','source'],
-              'community',          '#611868',
-              'hel_ilmainen_pitka', '#611868',
-              'hel_ilmainen_lyhyt', '#611868',
-              'hel_sallittu_kiellon_ulkopuolella', '#611868',
-              '#0B49D0'
-            ]
+            'line-color': '#000000'
           }
         });
         // Hover fill — red, toggled via setFilter
         map.addLayer({ id:'master-poly-hover-fill', type:'fill', source:'master-polygons', minzoom:13,
-          paint:{ 'fill-color':'#1266f1', 'fill-opacity': hlOpacity('hoverFill') },
+          paint:{ 'fill-color':'#5c7ad6', 'fill-opacity': hlOpacity('hoverFill') },
           filter:['==', ['get','id'], '__none__']
         });
         // Hover outline — on the red hovered area, toggled via setFilter
         map.addLayer({ id:'master-poly-hover-line', type:'line', source:'master-polygons', minzoom:13,
-          paint:{ 'line-color':'#0B49D0', 'line-width': 2.5, 'line-opacity': hlOpacity('hoverLine') },
+          paint:{ 'line-color':'#000000', 'line-width': 2.5, 'line-opacity': hlOpacity('hoverLine') },
           filter:['==', ['get','id'], '__none__']
         });
         // Group highlight line — thick dark, toggled via setFilter
@@ -9073,16 +9212,16 @@
         map.addLayer({ id:'master-poly-group-fill', type:'fill', source:'master-polygons', minzoom:13,
           paint:{ 'fill-opacity': hlOpacity('groupFill'),
             'fill-color': ['match', ['get','source'],
-              'community',          '#7F1F89',
-              'hel_ilmainen_pitka', '#7F1F89',
-              'hel_ilmainen_lyhyt', '#7F1F89',
-              'hel_sallittu_kiellon_ulkopuolella', '#7F1F89',
-              'hel_kertamaksu_1h',  '#1266f1',
-              'hel_kertamaksu_2h',  '#1266f1',
-              'hel_kertamaksu_4h',  '#1266f1',
-              'hel_maksullinen_ei_tunnusta',        '#1266f1',
-              'hel_kertamaksu_1h_ei_tunnusta',      '#1266f1',
-              '#1266f1'
+              'community',          '#7ac66d',
+              'hel_ilmainen_pitka', '#7ac66d',
+              'hel_ilmainen_lyhyt', '#7ac66d',
+              'hel_sallittu_kiellon_ulkopuolella', '#7ac66d',
+              'hel_kertamaksu_1h',  '#5c7ad6',
+              'hel_kertamaksu_2h',  '#5c7ad6',
+              'hel_kertamaksu_4h',  '#5c7ad6',
+              'hel_maksullinen_ei_tunnusta',        '#5c7ad6',
+              'hel_kertamaksu_1h_ei_tunnusta',      '#5c7ad6',
+              '#5c7ad6'
             ]
           },
           filter:['==', ['get','id'], '__none__']
@@ -9206,13 +9345,25 @@
     // rajoitus joka aiemmin kaatoi icon-size-lausekkeen), siksi mahdollinen
     // ominaisuuskohtainen ['case'] menee interpolaten ULOSTULOIHIN, ei toisin päin.
     function hlStops(key){
-      const S = {
-        hoverFill: [13, 0.95, 15, 0.78, 17, 0.55, 19, 0.42],  // p-merkin alla, kirkkaan punainen
-        groupFill: [13, 0.90, 15, 0.72, 17, 0.48, 19, 0.35],  // samoilla tiedoilla olevat, tummansininen
+      // MUUTOS: alueet eivät ole enää läpikuultavia vaan täysin peittäviä.
+      // Kaikki kuusi tasoa on nyt 1.00 joka zoomilla. Rampin logiikka on
+      // tallella, joten läpinäkyvyyden saa takaisin vaihtamalla arvot
+      // S_LAPIKUULTAVA:sta S:ään (ei muita muutoksia tarvita).
+      const S_LAPIKUULTAVA = {
+        hoverFill: [13, 0.95, 15, 0.78, 17, 0.55, 19, 0.42],
+        groupFill: [13, 0.90, 15, 0.72, 17, 0.48, 19, 0.35],
         hoverLine: [13, 1.00, 15, 1.00, 17, 0.92, 19, 0.85],
         groupLine: [13, 1.00, 15, 0.95, 17, 0.85, 19, 0.78],
-        baseFill:  [13, 0.26, 15, 0.21, 17, 0.16, 19, 0.13],  // maksulliset + ilmaiset, perustila
+        baseFill:  [13, 0.26, 15, 0.21, 17, 0.16, 19, 0.13],
         baseLine:  [13, 0.60, 15, 0.55, 17, 0.47, 19, 0.42]
+      };
+      const S = {
+        hoverFill: [13, 1.00, 15, 1.00, 17, 1.00, 19, 1.00],  // p-merkin alla, punainen
+        groupFill: [13, 1.00, 15, 1.00, 17, 1.00, 19, 1.00],  // samoilla tiedoilla olevat, musta
+        hoverLine: [13, 1.00, 15, 1.00, 17, 1.00, 19, 1.00],
+        groupLine: [13, 1.00, 15, 1.00, 17, 1.00, 19, 1.00],
+        baseFill:  [13, 1.00, 15, 1.00, 17, 1.00, 19, 1.00],  // maksulliset + ilmaiset, perustila
+        baseLine:  [13, 1.00, 15, 1.00, 17, 1.00, 19, 1.00]   // musta 1 px reunaviiva
       };
       return S[key];
     }
@@ -9236,7 +9387,7 @@
       // Colour scheme: purple for free areas, blue for paid
       const _freeSrc = ['community','hel_ilmainen_pitka','hel_ilmainen_lyhyt','hel_sallittu_kiellon_ulkopuolella'];
       const _isFree  = _freeSrc.includes(props.source);
-      const _lineClr = _isFree ? '#611868' : '#0B49D0';
+      const _lineClr = '#000000';
       const _hoverFillClr = '#ff1744';   // hovered area → red (as before)
       const _groupFillClr = '#0C0243';   // same-group areas → black (as before)
       // "Iso aluekokonaisuus" (large_area): p-merkin alla EI täyttöä lainkaan —
@@ -10253,32 +10404,30 @@
           geometry: r.polygon_coordinates
         }));
 
-      const geojson = { type:'FeatureCollection', features: editorAllFeatures };
+      // HUOM: editorAllFeatures säilyy ALKUPERÄISENÄ geometriana, koska
+      // buildMergedGeom() kirjoittaa siitä yhdistetyn alueen tietokantaan.
+      // Pilleröinti tehdään vasta tähän piirrettävään kopioon.
+      const geojson = { type:'FeatureCollection',
+        features: editorAllFeatures.map(f => ({ type:'Feature', properties:f.properties,
+                                                geometry: pillifyGeometry(f.geometry) })) };
 
       if (editorMap.getSource('editor-all')) {
         editorMap.getSource('editor-all').setData(geojson);
       } else {
         editorMap.addSource('editor-all', { type:'geojson', data: geojson });
         editorMap.addLayer({ id:'editor-fill', type:'fill', source:'editor-all', minzoom:13,
-          paint:{ 'fill-opacity':0.35,
+          paint:{ 'fill-opacity':1,
             'fill-color': ['match', ['get','source'],
-              'community',          '#7F1F89',
-              'hel_ilmainen_pitka', '#7F1F89',
-              'hel_ilmainen_lyhyt', '#7F1F89',
-              'hel_sallittu_kiellon_ulkopuolella', '#7F1F89',
-              '#1266f1'
+              'community',          '#7ac66d',
+              'hel_ilmainen_pitka', '#7ac66d',
+              'hel_ilmainen_lyhyt', '#7ac66d',
+              'hel_sallittu_kiellon_ulkopuolella', '#7ac66d',
+              '#5c7ad6'
             ]
           }
         });
         editorMap.addLayer({ id:'editor-line', type:'line', source:'editor-all', minzoom:13,
-          paint:{ 'line-width':1,
-            'line-color': ['match', ['get','source'],
-              'community',          '#611868',
-              'hel_ilmainen_pitka', '#611868',
-              'hel_ilmainen_lyhyt', '#611868',
-              'hel_sallittu_kiellon_ulkopuolella', '#611868',
-              '#0B49D0'
-            ]
+          paint:{ 'line-width':1, 'line-color':'#000000'
           }
         });
         editorMap.addLayer({ id:'editor-sel-fill', type:'fill', source:'editor-all', minzoom:13,
@@ -12966,8 +13115,10 @@
     // Paid areas whose fee is NOT in force at the Ajanhetki time render in
     // the free purple. freeExpr=null restores the plain source-based colours
     // (same values the layers were created with).
-    const TA_FREE_FILL = '#7F1F89', TA_PAID_FILL = '#1266f1';
-    const TA_FREE_LINE = '#611868', TA_PAID_LINE = '#0B49D0';
+    const TA_FREE_FILL = '#7ac66d', TA_PAID_FILL = '#5c7ad6';
+    // Reunaviiva on molemmilla musta — pidetään kaksi vakiota, jotta värin voi
+    // haluttaessa taas eriyttää maksullisen ja ilmaisen välillä.
+    const TA_FREE_LINE = '#000000', TA_PAID_LINE = '#000000';
     const TA_STATIC_FILL = ['match', ['get','source'],
       'community', TA_FREE_FILL, 'hel_ilmainen_pitka', TA_FREE_FILL,
       'hel_ilmainen_lyhyt', TA_FREE_FILL, 'hel_sallittu_kiellon_ulkopuolella', TA_FREE_FILL,
