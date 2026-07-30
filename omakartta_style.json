@@ -1062,11 +1062,16 @@
       padding: 30px 20px;
     }
 
-    /* Static version label inside Tietoja-näkymä */
+    /* Static version label inside Tietoja-näkymä. Sisältää version JA
+       build-tunnisteen, joten teksti on aiempaa pidempi: ei rivinvaihtoa,
+       ja se saa kutistua jos rivin alkuosa vie tilaa. */
     .about-version {
       font-size: 14px;
       color: #888;
       margin-left: 8px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
     }
 
     /* ── Ajoneuvot ──────────────────────────────────────────────────────
@@ -4162,7 +4167,9 @@
         </div>
         <div class="settings-item" style="cursor:default;">
           <div class="settings-item-text"><div class="settings-item-label">Sovelluksen versio</div></div>
-          <div class="about-version">1.0.0</div>
+          <!-- Sisältö kirjoitetaan JS:stä (APP_VERSION + APP_BUILD). Tässä oleva
+               teksti on vain varmistus siltä varalta ettei skripti aja. -->
+          <div class="about-version" id="about-version">1.0.0</div>
         </div>
         <div class="settings-item" onclick="confirmOpenExternal('https://totalparking.fi')">
           <div class="settings-item-text"><div class="settings-item-label">Yrityksen kotisivut</div></div>
@@ -5562,7 +5569,19 @@
   </div>
 
   <script>
-    console.log('BUILD: 2026-07-08 zoom13-kynnys');
+    // ── Sovelluksen versio ja build-tunniste ──────────────────────────
+    // NOSTA APP_BUILDia jokaisella toimituksella. Arvo näkyy sovelluksessa
+    // kohdassa Asetukset → Tietoja sovelluksesta → Sovelluksen versio, joten
+    // siitä näkee heti onko selaimessa uusin tiedosto vai välimuistiin jäänyt
+    // vanha versio. Sama arvo tulee myös konsoliin ja window.TP_BUILDiin.
+    const APP_VERSION = '1.0.0';
+    const APP_BUILD   = '2026-07-30-g';
+    window.TP_BUILD = APP_BUILD;
+    console.log('BUILD: ' + APP_VERSION + ' · ' + APP_BUILD);
+    (function writeAboutVersion(){
+      const el = document.getElementById('about-version');
+      if (el) el.textContent = APP_VERSION + ' · ' + APP_BUILD;
+    })();
 
     // ══ PYÖRISTETYT KULMAT PYSÄKÖINTIALUEILLE ══════════════════════════
     // Alueiden kulmat pyöristetään, jolloin teräviä kärkiä ei jää. Muoto EI ole
@@ -9258,7 +9277,8 @@
           paint:{ 'line-emissive-strength': TP_EMISSIVE,
             'line-width': RIM_WIDTH, 'line-color': '#000000',
             'line-opacity': hlOpacity('baseLine'),
-            'line-opacity-transition': { duration: FOCUS.ms }
+            'line-opacity-transition': { duration: FOCUS.ms },
+            'line-color-transition': { duration: FOCUS.ms }
           },
           layout:{ 'line-join':'round', 'line-cap':'round' }
         });
@@ -9269,7 +9289,8 @@
           paint:{ 'line-emissive-strength': TP_EMISSIVE,
             'line-width': BOOST_WIDTH, 'line-color': AREA_FILL_EXPR,
             'line-opacity': hlOpacity('boost'),
-            'line-opacity-transition': { duration: FOCUS.ms }
+            'line-opacity-transition': { duration: FOCUS.ms },
+            'line-color-transition': { duration: FOCUS.ms }
           },
           layout:{ 'line-join':'round', 'line-cap':'round' }
         });
@@ -9278,7 +9299,8 @@
           paint:{ 'fill-emissive-strength': TP_EMISSIVE,
             'fill-opacity': hlOpacity('baseFill'),
             'fill-opacity-transition': { duration: FOCUS.ms },
-            'fill-color': AREA_FILL_EXPR
+            'fill-color': AREA_FILL_EXPR,
+            'fill-color-transition': { duration: FOCUS.ms }
           }
         });
         // 4) VALITUN ALUEEN punainen reunaviiva, täytön PÄÄLLÄ. Näkyy vain
@@ -9423,25 +9445,34 @@
       ms:             280,                      // siirtymän kesto (ms)
       hoverColor:     '#ff1744',                // valitun alueen reunaviiva + kaukoviiva
       hoverFillColor: 'rgba(255, 23, 68, 0.5)', // valitun alueen täyttö, 50 %
-      dimFill:        0.30,                     // muiden alueiden täyttö korostustilassa
-      dimLine:        0,                        // muiden alueiden reunaviiva (ks. alla)
-      dimBoost:       0.30,                     // muiden alueiden paksunnusviiva
+      dimBlend:       0.70,                     // taka-alan väri: 70 % kohti teeman sävyä
       dimIcon:        0.25,                     // halli-/latauspisteikonit taka-alalle
       dimPoi:         0.30,                     // POI-tekstit taka-alalle
       scrim:          0.40                      // taustakartan himmennys
     };
-    // MIKSI dimLine = 0: musta reunaviiva piirretään täytön ALLA, ja normaalisti
-    // peittävä täyttö kätkee sen sisäpuolen -> näkyviin jää vain ulkopuolinen
-    // 1 px. Kun täyttö muuttuu puoliläpinäkyväksi, viivan SISÄPUOLI alkaa näkyä
-    // täytön läpi ja reuna näyttää tuplaantuvan. Sama koski VALITTUA aluetta,
-    // jonka täyttö on 50 % punaista: sen alla ollut punainen reunaviiva näkyi
-    // sekä ulko- että sisäpuolelta eli tuplana.
+    // MIKSI TAKA-ALA HIMMENNETÄÄN VÄRILLÄ EIKÄ LÄPINÄKYVYYDELLÄ
+    // Alue piirretään kolmella päällekkäisellä tasolla (reunaviiva, paksunnus-
+    // viiva, täyttö), jotka menevät osittain päällekkäin. Jos niille annetaan
+    // sama osittainen läpinäkyvyys, päällekkäiset kohdat SUMMAUTUVAT:
+    //   yksi taso   0.30
+    //   kaksi tasoa 1 − 0.70²  = 0.51
+    //   kolme tasoa 1 − 0.70³  = 0.66
+    // Lopputulos oli sipulimainen rengaskuvio, joka vielä muutti muotoaan
+    // zoomatessa, koska viivojen leveydet ovat zoom-sidottuja. Juuri tämän
+    // käyttäjä näki "reunaviivana joka skaalautuu ja näkyy".
     //
-    // Ratkaisu: korostustilassa perusreunaviiva (master-poly-line) piirretään
-    // VAIN samoilla tiedoilla oleville alueille. Valittu alue saa oman ohuen
-    // reunaviivansa master-poly-sel-line-tasolta, joka piirretään täytön
-    // PÄÄLLE — silloin läpinäkyvyys ei voi paljastaa mitään sen alta ja viiva
-    // on täsmälleen yhtä paksu kuin musta reunaviiva muilla alueilla.
+    // Korjaus: kaikki kolme tasoa pysyvät TÄYSIN PEITTÄVINÄ myös taka-alalla,
+    // ja himmennys tehdään sekoittamalla alueen väri kohti teeman taustasävyä
+    // (dimHex / FOCUS.dimBlend). Koska kaikki kolme saavat saman värin, ne
+    // sulautuvat yhdeksi tasaväriseksi muodoksi: reunaviivaa ei erota lainkaan
+    // eikä päällekkäisyys voi tuottaa raitoja millään zoomilla.
+    //
+    // VALITTU alue: perusreunaviiva menee nollaan (focusLineCase). Sen punainen
+    // reuna tulee yksinomaan master-poly-sel-line-tasolta, joka on KIINTEÄ 2 px
+    // ja piirretään täytön PÄÄLLE. Näin 50 % punainen täyttö ei voi paljastaa
+    // mitään sen alta eikä reunan paksuus muutu zoomatessa. Jos perusreunaviiva
+    // jätettäisiin päälle, se olisi zoom-sidottu RIM_WIDTH (7 px → 2 px) ja
+    // näyttäisi kasvavalta punaiselta reunalta.
 
     // ── Alueiden näkyvyys kaukaa: kolmiosainen piirto ─────────────────
     // Kadunvarsialue on ~2,5 m leveä. Zoomilla 13 se on noin 0,25 pikseliä,
@@ -9472,10 +9503,13 @@
     // puolin, eli (RIM − BOOST) / 2 = 1,0 px joka zoomilla.
     const RIM_WIDTH        = zwLarge([13, 7.0, 3.0,  15, 5.2, 2.6,  16, 3.9, 2.3,  16.5, 2.0, 2.0,  18, 2.0, 2.0]);
     const BOOST_WIDTH      = zwLarge([13, 5.0, 1.0,  15, 3.2, 0.6,  16, 1.9, 0.3,  16.5, 0.0, 0.0]);
-    // Valitun alueen punainen reunaviiva. Kaukana se on yhtä leveä kuin musta
-    // rimma (peittää punaisen paksunnusviivan — punaista punaisen päälle, ei
-    // saumaa), lähellä 1 px. Piirretään täytön PÄÄLLE.
-    const SEL_WIDTH        = zwLarge([13, 7.0, 3.0,  15, 5.2, 2.6,  16, 3.0, 2.3,  16.5, 1.0, 1.0,  18, 1.0, 1.0]);
+    // Valitun alueen punainen reunaviiva: KIINTEÄ 2 px joka zoomilla. Ei
+    // zoom-lauseketta lainkaan, joten se ei voi kasvaa zoomatessa. Piirretään
+    // täytön PÄÄLLE, joten 50 % punainen täyttö ei paljasta mitään sen alta.
+    // Viiva on keskitetty alueen reunaan -> 1 px ulos + 1 px sisään = 2 px
+    // punaista kaistaletta, ja se peittää täsmälleen alla olevan mustan rimman
+    // (RIM − BOOST = 2 px) eli reuna ei tuplaannu.
+    const SEL_WIDTH        = 2;
 
     // Alueen väri lähdetyypin mukaan — sama lauseke täytölle, boost-viivalle
     // ja ryhmätäytölle, jotta värit eivät pääse eriytymään.
@@ -9501,31 +9535,30 @@
     let focusHalliId    = null; // valittu pysäköintihalli
     let focusChargingId = null; // valittu latauspiste
 
-    // Läpinäkyvyyslauseke perustasoille: valittu alue ja sen kanssa samoilla
-    // tiedoilla olevat säilyttävät täyden näkyvyyden, muut himmenevät.
-    function focusCase(dimValue){
+    // Perusreunaviivan läpinäkyvyys: kaikilla 1 paitsi valitulla alueella 0,
+    // jonka punainen 2 px reuna tulee master-poly-sel-line-tasolta.
+    function focusLineCase(){
       if (!focusActive) return 1;
-      const conds = [];
-      if (focusHovId !== null && focusHovId !== undefined)
-        conds.push(['==', ['get','id'], focusHovId]);
-      if (focusGroup.length)
-        conds.push(['in', ['get','id'], ['literal', focusGroup]]);
-      if (!conds.length) return dimValue;        // ['case'] ilman ehtoja ei kelpaa
-      const parts = ['case'];
-      conds.forEach(c => parts.push(c, 1));
-      parts.push(dimValue);
-      return parts;
+      if (focusHovId === null || focusHovId === undefined) return 1;
+      return ['case', ['==', ['get','id'], focusHovId], 0, 1];
+    }
+    // Sekoittaa hex-värin kohti teeman taustasävyä (yö = tumma, päivä = vaalea).
+    function _mixHex(a, b, t){
+      const p = h => { h = String(h).replace('#','');
+        if (h.length === 3) h = h.split('').map(c => c + c).join('');
+        return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)]; };
+      const A = p(a), B = p(b);
+      return '#' + [0,1,2].map(i =>
+        Math.max(0, Math.min(255, Math.round(A[i] + (B[i]-A[i]) * t)))
+          .toString(16).padStart(2,'0')).join('');
+    }
+    function dimHex(hex){
+      try { return _mixHex(hex, dimColorFor(), FOCUS.dimBlend); }
+      catch(e){ return hex; }
     }
     // Yksi paikka josta jokainen taso kysyy läpinäkyvyytensä. Kutsutaan sekä
     // tasoja luotaessa (focusActive = false -> kaikki 1) että korostuksen
     // vaihtuessa.
-    // Vain ryhmä saa arvon 1 — valittu alue jää tähän pois, koska sen
-    // reunaviiva tulee omalta tasoltaan täytön päältä.
-    function focusGroupOnly(dimValue){
-      if (!focusActive) return 1;
-      if (!focusGroup.length) return dimValue;
-      return ['case', ['in', ['get','id'], ['literal', focusGroup]], 1, dimValue];
-    }
     // Ikonit (halli / latauspiste): valittu pysyy täytenä, muut himmenevät.
     function iconFocusOpacity(selId){
       if (!focusActive) return 1;
@@ -9534,9 +9567,11 @@
     }
     function hlOpacity(key){
       switch (key) {
-        case 'baseFill': return focusCase(FOCUS.dimFill);
-        case 'baseLine': return focusGroupOnly(FOCUS.dimLine);
-        case 'boost':    return focusCase(FOCUS.dimBoost);
+        // Täyttö ja paksunnusviiva ovat AINA täysin peittäviä — taka-alalle
+        // jääminen hoidetaan värillä, ei läpinäkyvyydellä (ks. selitys ylempänä).
+        case 'baseFill': return 1;
+        case 'boost':    return 1;
+        case 'baseLine': return focusLineCase();
         case 'selLine':  return (focusActive && focusHovId !== null && focusHovId !== undefined)
                                 ? ['case', ['==', ['get','id'], focusHovId], 1, 0] : 0;
         case 'poiLabel': return focusActive ? FOCUS.dimPoi : 1;
@@ -9591,16 +9626,27 @@
           map.addSource('mb-streets', { type:'vector', url:'mapbox://mapbox.mapbox-streets-v8' });
         map.addLayer({
           id:'tp-poi-labels', type:'symbol', source:'mb-streets', 'source-layer':'poi_label',
-          slot:'top', minzoom:15,
-          // filterrank karsii vähäpätöisimmät kohteet, muuten teksti ruuhkautuu
-          filter:['all', ['has','name'], ['<=', ['coalesce', ['get','filterrank'], 0], 3]],
+          slot:'top', minzoom:13,
+          // Tiheys kuten Mapboxin omassa Standard/Streets-tyylissä: filterrank
+          // kertoo kohteen merkittävyyden (1 = tärkein). Raja nousee zoomin
+          // mukana portaittain, jolloin kaukaa näkyvät vain merkittävimmät ja
+          // lähelle mentäessä kaikki. Aiemmin raja oli kiinteä 3 ja tasolla oli
+          // minzoom 15, minkä takia nimet katosivat kokonaan kun zoomasi ulos.
+          // HUOM: zoom-lauseke suodattimen sisällä on sallittu (Mapbox käyttää
+          // samaa kuviota omassa poi-label-tasossaan) toisin kuin paint- ja
+          // layout-ominaisuuksissa.
+          filter:['all',
+            ['has','name'],
+            ['<=', ['coalesce', ['get','filterrank'], 5],
+                   ['step', ['zoom'], 1, 16, 2, 17, 3, 18, 5]]
+          ],
           layout:{
             'text-field': ['get','name'],
-            'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10.5, 18, 12.5],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 13, 11, 16, 12, 20, 13.5],
             'text-max-width': 8,
             'text-anchor': 'center',
-            'text-padding': 4,
-            'text-optional': true,
+            'text-padding': 2,
+            // Pienempi sizerank = merkittävämpi kohde -> voittaa törmäyksen
             'symbol-sort-key': ['coalesce', ['get','sizerank'], 50]
           },
           paint:{
@@ -13261,20 +13307,48 @@
     let _taFreeExpr = null;
     function applyTimeAwareColors(freeExpr) {
       if (freeExpr !== undefined) _taFreeExpr = freeExpr;
-      const fill = _taFreeExpr ? ['case', _taFreeExpr, TA_FREE_FILL, TA_PAID_FILL] : TA_STATIC_FILL;
-      const line = _taFreeExpr ? ['case', _taFreeExpr, TA_FREE_LINE, TA_PAID_LINE] : TA_STATIC_LINE;
-      // Valittu alue punaiseksi: ehto kääritään värilausekkeen ympärille, joten
-      // vain VÄRI vaihtuu — leveydet, tasot ja suodattimet pysyvät koskemattomina.
-      const hov = (c, base) => (focusHovId === null || focusHovId === undefined)
-        ? base : ['case', ['==', ['get','id'], focusHovId], c, base];
+      const byKind = (free, paid) => _taFreeExpr
+        ? ['case', _taFreeExpr, free, paid]
+        : ['match', ['get','source'],
+            'community', free, 'hel_ilmainen_pitka', free,
+            'hel_ilmainen_lyhyt', free, 'hel_sallittu_kiellon_ulkopuolella', free,
+            paid];
+      const fill    = byKind(TA_FREE_FILL, TA_PAID_FILL);
+      const line    = byKind(TA_FREE_LINE, TA_PAID_LINE);
+      // Taka-alan väri: sama lauseke mutta sävyt sekoitettu kohti teeman
+      // taustaa. Täyttö, paksunnusviiva JA reunaviiva saavat kaikki tämän
+      // saman värin, jolloin ne sulautuvat yhdeksi tasaväriseksi muodoksi.
+      const fillDim = byKind(dimHex(TA_FREE_FILL), dimHex(TA_PAID_FILL));
+
+      // Kolmiportainen värivalinta korostustilassa:
+      //   valittu alue       -> sel
+      //   samoilla tiedoilla -> grp
+      //   taka-alalle jäävät -> dim
+      const pick = (sel, grp, dim) => {
+        if (!focusActive) return grp;
+        const parts = ['case'];
+        if (focusHovId !== null && focusHovId !== undefined)
+          parts.push(['==', ['get','id'], focusHovId], sel);
+        if (focusGroup.length)
+          parts.push(['in', ['get','id'], ['literal', focusGroup]], grp);
+        if (parts.length === 1) return dim;   // ei ehtoja -> kaikki taka-alalla
+        parts.push(dim);
+        return parts;
+      };
       // Isolla aluekokonaisuudella täyttö jää värittömäksi (läpinäkyvä punainen),
-      // jolloin vain reunaviiva ja kaukoviiva muuttuvat punaisiksi.
+      // jolloin vain punainen 2 px reunaviiva erottuu.
       const hovFill = focusHovLarge ? 'rgba(255, 23, 68, 0)' : FOCUS.hoverFillColor;
-      if (map.getLayer('master-poly-fill'))  map.setPaintProperty('master-poly-fill',  'fill-color', hov(hovFill, fill));
-      if (map.getLayer('master-poly-line'))  map.setPaintProperty('master-poly-line',  'line-color', hov(FOCUS.hoverColor, line));
-      // Paksunnusviiva seuraa täytön väriä, jotta kaukaa näkyvä pilleri on
-      // samaa väriä kuin alue lähellä.
-      if (map.getLayer('master-poly-boost')) map.setPaintProperty('master-poly-boost', 'line-color', hov(FOCUS.hoverColor, fill));
+      if (map.getLayer('master-poly-fill'))
+        map.setPaintProperty('master-poly-fill',  'fill-color', pick(hovFill, fill, fillDim));
+      // Valitun alueen perusreunaviiva on läpinäkyvyydeltään 0 (focusLineCase),
+      // joten sen väri ei näy — pidetään silti mustana ettei punaista jää
+      // vahingossa piirtymään zoom-sidotulla leveydellä.
+      if (map.getLayer('master-poly-line'))
+        map.setPaintProperty('master-poly-line',  'line-color', pick(line, line, fillDim));
+      // Paksunnusviiva seuraa täytön väriä, jotta kaukaa näkyvä muoto on samaa
+      // väriä kuin alue lähellä.
+      if (map.getLayer('master-poly-boost'))
+        map.setPaintProperty('master-poly-boost', 'line-color', pick(FOCUS.hoverColor, fill, fillDim));
     }
     // Parking garages (halli-icons) are paid parking, so they are shown only when
     // paid areas are shown — i.e. NOT in the free-only view, and NOT in the
