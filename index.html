@@ -9269,40 +9269,10 @@
             'fill-color': AREA_FILL_EXPR
           }
         });
-        // 4) Ryhmätäyttö — ei tällä hetkellä käytössä (perustäyttö hoitaa värin
-        //    myös korostustilassa), mutta taso pidetään jotta vastaaville
-        //    alueille voi myöhemmin antaa oman täyttökäsittelyn.
-        map.addLayer({ id:'master-poly-group-fill', type:'fill', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'fill-emissive-strength': TP_EMISSIVE,
-            'fill-opacity': hlOpacity('groupFill'),
-            'fill-color': AREA_FILL_EXPR
-          },
-          filter:['==', ['get','id'], '__none__']
-        });
-        // 5) Vastaavien alueiden korostusreunus: paksumpi musta viiva täytön
-        //    PÄÄLLÄ, jolloin ne erottuvat himmennetystä ympäristöstä.
-        map.addLayer({ id:'master-poly-group-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'line-emissive-strength': TP_EMISSIVE,
-            'line-color':'#000000', 'line-width': GROUP_LINE_WIDTH,
-            'line-opacity': hlOpacity('groupLine')
-          },
-          layout:{ 'line-join':'round', 'line-cap':'round' },
-          filter:['==', ['get','id'], '__none__']
-        });
-        // 6) Valitun alueen punainen täyttö (50 %)
-        map.addLayer({ id:'master-poly-hover-fill', type:'fill', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'fill-emissive-strength': TP_EMISSIVE,
-            'fill-color': FOCUS.hoverColor, 'fill-opacity': hlOpacity('hoverFill') },
-          filter:['==', ['get','id'], '__none__']
-        });
-        // 7) Valitun alueen punainen reunus päällimmäisenä
-        map.addLayer({ id:'master-poly-hover-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'line-emissive-strength': TP_EMISSIVE,
-            'line-color': FOCUS.hoverColor, 'line-width': HOVER_LINE_WIDTH,
-            'line-opacity': hlOpacity('hoverLine') },
-          layout:{ 'line-join':'round', 'line-cap':'round' },
-          filter:['==', ['get','id'], '__none__']
-        });
+        // Korostustilalle EI ole omia tasoja. Valittu alue muuttuu punaiseksi
+        // pelkällä värinvaihdolla näillä samoilla kolmella tasolla, ja vastaavat
+        // alueet erottuvat siitä että ne säilyttävät täyden näkyvyyden muiden
+        // himmentyessä. Näin yksikään viivanleveys ei muutu hoveroinnin takia.
         // Apply current filter state (free areas hidden by default until enabled)
         applyRangeFilter();
 
@@ -9413,9 +9383,9 @@
 
     // ══ KOROSTUSTILA ("focus") ═════════════════════════════════════════
     // Kun p-merkki on alueen päällä, näkymä jakautuu kolmeen:
-    //   1) VALITTU alue      -> punainen täyttö 50 % + punainen reunus
-    //   2) SAMOILLA TIEDOILLA olevat alueet -> täysi näkyvyys omassa värissään
-    //      + paksumpi musta korostusreunus (ei enää tummansinistä täyttöä)
+    //   1) VALITTU alue      -> täyttö 50 % punaista, reunaviiva punainen
+    //                          (SAMALLA leveydellä kuin musta on muutenkin)
+    //   2) SAMOILLA TIEDOILLA olevat alueet -> täysin ennallaan
     //   3) KAIKKI MUU        -> muut alueet himmenevät ja taustakartan päälle
     //      nousee himmennysverho, jolloin kartta jää taka-alalle
     // Siirtymä on pehmeä: läpinäkyvyydet on sidottu *-opacity-transitioniin,
@@ -9423,14 +9393,24 @@
     // (punainen ja ryhmäreunus) on tarkoituksella VÄLITÖN, jotta valinta
     // vastaa heti p-merkin liikkeeseen — vain tunnelma hiipuu.
     const FOCUS = {
-      ms:         280,        // siirtymän kesto (ms)
-      hoverColor: '#ff1744',  // valitun alueen punainen
-      hoverFill:  0.50,       // punaisen täytön läpinäkyvyys
-      dimFill:    0.30,       // muiden alueiden täyttö korostustilassa
-      dimLine:    0.30,       // muiden alueiden reunaviiva
-      dimBoost:   0.30,       // muiden alueiden paksunnusviiva
-      scrim:      0.40        // taustakartan himmennys
+      ms:             280,                      // siirtymän kesto (ms)
+      hoverColor:     '#ff1744',                // valitun alueen reunaviiva + kaukoviiva
+      hoverFillColor: 'rgba(255, 23, 68, 0.5)', // valitun alueen täyttö, 50 %
+      dimFill:        0.30,                     // muiden alueiden täyttö korostustilassa
+      dimLine:        0,                        // muiden alueiden reunaviiva (ks. alla)
+      dimBoost:       0.30,                     // muiden alueiden paksunnusviiva
+      scrim:          0.40                      // taustakartan himmennys
     };
+    // MIKSI dimLine = 0: musta reunaviiva piirretään täytön ALLA, ja normaalisti
+    // peittävä täyttö kätkee sen sisäpuolen -> näkyviin jää vain ulkopuolinen
+    // 1 px. Kun himmennetyn alueen täyttö muuttuu puoliläpinäkyväksi, viivan
+    // SISÄPUOLI alkaa näkyä täytön läpi ja reuna näyttää tuplaantuvan. Siksi
+    // himmennetyiltä alueilta otetaan reunaviiva kokonaan pois — ne ovat
+    // korostustilassa pelkkiä pehmeitä värilaikkuja.
+    //
+    // Valitun alueen punainen on nyt pelkkä VÄRINVAIHTO samoilla tasoilla:
+    // yhtään viivanleveyttä ei muuteta missään kohtaa hoveroinnin takia, joten
+    // mikään reuna ei voi paksuuntua.
 
     // ── Alueiden näkyvyys kaukaa: kolmiosainen piirto ─────────────────
     // Kadunvarsialue on ~2,5 m leveä. Zoomilla 13 se on noin 0,25 pikseliä,
@@ -9459,8 +9439,6 @@
     }
     const RIM_WIDTH        = zwLarge([13, 7.0, 3.0,  15, 5.0, 2.5,  16.5, 3.0, 2.0,  18, 2.0, 2.0]);
     const BOOST_WIDTH      = zwLarge([13, 5.0, 1.0,  15, 3.2, 0.6,  16.5, 1.2, 0.0,  18, 0.0, 0.0]);
-    const HOVER_LINE_WIDTH = zw([13, 8.0, 15, 6.0, 16.5, 4.0, 18, 2.5]);
-    const GROUP_LINE_WIDTH = zw([13, 7.5, 15, 5.5, 16.5, 3.5, 18, 2.2]);
 
     // Alueen väri lähdetyypin mukaan — sama lauseke täytölle, boost-viivalle
     // ja ryhmätäytölle, jotta värit eivät pääse eriytymään.
@@ -9480,20 +9458,21 @@
     // ── Korostustilan tila ────────────────────────────────────────────
     let focusActive = false;   // onko p-merkki jonkin alueen päällä
     let focusHovId  = null;    // valitun alueen id
+    let focusHovLarge = false; // onko valittu alue "iso aluekokonaisuus"
     let focusGroup  = [];      // samoilla tiedoilla olevien id:t (ilman valittua)
 
-    // Kolmiportainen läpinäkyvyyslauseke perustasoille:
-    //   valittu -> hovValue (0 = piilotettu, punainen piirtyy tilalle)
-    //   ryhmä   -> 1 (täysi näkyvyys)
-    //   muut    -> dimValue
-    function focusCase(dimValue, hovValue){
+    // Läpinäkyvyyslauseke perustasoille: valittu alue ja sen kanssa samoilla
+    // tiedoilla olevat säilyttävät täyden näkyvyyden, muut himmenevät.
+    function focusCase(dimValue){
       if (!focusActive) return 1;
-      const parts = ['case'];
+      const conds = [];
       if (focusHovId !== null && focusHovId !== undefined)
-        parts.push(['==', ['get','id'], focusHovId], hovValue);
+        conds.push(['==', ['get','id'], focusHovId]);
       if (focusGroup.length)
-        parts.push(['in', ['get','id'], ['literal', focusGroup]], 1);
-      if (parts.length === 1) return dimValue;   // ['case'] ilman ehtoja ei kelpaa
+        conds.push(['in', ['get','id'], ['literal', focusGroup]]);
+      if (!conds.length) return dimValue;        // ['case'] ilman ehtoja ei kelpaa
+      const parts = ['case'];
+      conds.forEach(c => parts.push(c, 1));
       parts.push(dimValue);
       return parts;
     }
@@ -9502,11 +9481,10 @@
     // vaihtuessa.
     function hlOpacity(key){
       switch (key) {
-        case 'baseFill':  return focusCase(FOCUS.dimFill,  0);
-        case 'baseLine':  return focusCase(FOCUS.dimLine,  0);
-        case 'boost':     return focusCase(FOCUS.dimBoost, 0);
-        case 'hoverFill': return FOCUS.hoverFill;
-        default:          return 1;   // hoverLine, groupLine, groupFill
+        case 'baseFill': return focusCase(FOCUS.dimFill);
+        case 'baseLine': return focusCase(FOCUS.dimLine);
+        case 'boost':    return focusCase(FOCUS.dimBoost);
+        default:         return 1;
       }
     }
 
@@ -9551,143 +9529,32 @@
       set('master-poly-fill',  'fill-opacity', hlOpacity('baseFill'));
       set('master-poly-line',  'line-opacity', hlOpacity('baseLine'));
       set('master-poly-boost', 'line-opacity', hlOpacity('boost'));
+      applyTimeAwareColors();   // valitun alueen punainen väri
       setDim(focusActive);
     }
 
     function applyHoverHighlight(props) {
-      if (!map.getLayer('master-poly-hover-fill')) return;
+      if (!map.getLayer('master-poly-fill')) return;
       const hovId = props.id;   // säilytä alkuperäinen tyyppi: numero / 'ilm_X'
-      // "Iso aluekokonaisuus": ei punaista täyttöä (vain punainen reunus) eikä
-      // ryhmäkorostusta — muuten koko näkymä värjäytyisi.
+      // "Iso aluekokonaisuus": ei punaista täyttöä (muuten koko näkymä
+      // värjäytyisi) eikä ryhmäkorostusta — vain punainen reunaviiva.
       const _isLarge = props.large_area === true || props.large_area === 'true';
-      const groupIds = _isLarge ? [] : getSameGroupIds(props).filter(id => id !== hovId);
 
-      focusActive = true;
-      focusHovId  = (hovId === undefined) ? null : hovId;
-      focusGroup  = groupIds;
+      focusActive   = true;
+      focusHovId    = (hovId === undefined) ? null : hovId;
+      focusHovLarge = _isLarge;
+      focusGroup    = _isLarge ? [] : getSameGroupIds(props).filter(id => id !== hovId);
 
-      // 1) Valittu alue: punainen täyttö 50 % + punainen reunus. Alueen oma
-      //    täyttö, boost ja musta reunus menevät nollaan (focusCase), joten
-      //    punainen ei sekoitu alla olevaan vihreään/siniseen.
-      map.setPaintProperty('master-poly-hover-fill', 'fill-color', FOCUS.hoverColor);
-      map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', hlOpacity('hoverFill'));
-      map.setFilter('master-poly-hover-fill',
-        (hovId && !_isLarge) ? ['==', ['get','id'], hovId] : ['==','id','__none__']
-      );
-      if (map.getLayer('master-poly-hover-line')) {
-        map.setPaintProperty('master-poly-hover-line', 'line-color', FOCUS.hoverColor);
-        map.setPaintProperty('master-poly-hover-line', 'line-opacity', 1);
-        map.setFilter('master-poly-hover-line',
-          hovId ? ['==', ['get','id'], hovId] : ['==','id','__none__']
-        );
-      }
-
-      // 2) Samoilla tiedoilla olevat alueet: EI enää tummansinistä täyttöä.
-      //    Ne pysyvät omassa värissään täydellä näkyvyydellä (focusCase antaa
-      //    niille arvon 1) ja saavat paksumman mustan korostusreunuksen.
-      //    master-poly-group-fill jää tässä mallissa käyttämättä — perustäyttö
-      //    hoitaa jo värin — mutta taso on jätetty paikalleen tulevaa varten.
-      if (map.getLayer('master-poly-group-fill'))
-        map.setFilter('master-poly-group-fill', ['==','id','__none__']);
-      map.setPaintProperty('master-poly-group-line', 'line-color', '#000000');
-      map.setPaintProperty('master-poly-group-line', 'line-opacity', 1);
-      map.setFilter('master-poly-group-line',
-        groupIds.length ? ['in', ['get','id'], ['literal', groupIds]] : ['==','id','__none__']
-      );
-
-      // 3) Kaikki muu hiipuu: muut alueet himmenevät ja verho nousee kartan
-      //    päälle. Nämä kulkevat *-opacity-transitionin läpi -> pehmeä siirtymä.
+      // Kaikki tapahtuu väreissä ja läpinäkyvyyksissä — ei suodattimia, ei
+      // leveyksiä, ei erillisiä tasoja.
       applyFocusPaint();
     }
 
-    let sizeAnimationId = null;
-    function startSizeAnimation() {
-      stopSizeAnimation();
-      const startTime = Date.now();
-      const cycleDuration = 2000; // 2 seconds per pulse cycle
-
-      function animate() {
-        if (!map.getLayer('master-poly-hover-fill')) return;
-        const elapsed = Date.now() - startTime;
-        const progress = (elapsed % cycleDuration) / cycleDuration;
-        const sineValue = 0.5 + 0.5 * Math.sin(progress * Math.PI * 2);
-        // Pulse opacity between 0.90 and 0.70 (vivid red)
-        const opacity = 0.90 - 0.20 * sineValue;
-        map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', opacity);
-        sizeAnimationId = requestAnimationFrame(animate);
-      }
-      animate();
-    }
-
-    function stopSizeAnimation() {
-      if (sizeAnimationId !== null) {
-        cancelAnimationFrame(sizeAnimationId);
-        sizeAnimationId = null;
-      }
-      if (map.getLayer('master-poly-hover-fill')) {
-        map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', hlOpacity('hoverFill'));
-      }
-    }
-
-    let pulseAnimationId = null;
-    function startPulseAnimation() {
-      stopPulseAnimation();
-      const startTime = Date.now();
-      const bounceDuration = 2000; // 2 seconds per bounce cycle
-      
-      function animate() {
-        if (!map.getLayer('master-poly-hover-fill')) return;
-        const elapsed = Date.now() - startTime;
-        const progress = (elapsed % bounceDuration) / bounceDuration;
-        
-        // Bounce pattern: two quick pops then rest
-        // First pop at 0-0.15, second pop at 0.2-0.35, rest 0.35-1.0
-        let opacity;
-        if (progress < 0.15) {
-          // First pop: quick rise and fall
-          const t = progress / 0.15;
-          opacity = 0.30 + 0.15 * Math.sin(t * Math.PI);
-        } else if (progress < 0.2) {
-          // Brief dip between pops
-          opacity = 0.30;
-        } else if (progress < 0.35) {
-          // Second pop: quick rise and fall
-          const t = (progress - 0.2) / 0.15;
-          opacity = 0.30 + 0.15 * Math.sin(t * Math.PI);
-        } else {
-          // Rest period - stay at base
-          opacity = 0.30;
-        }
-        
-        map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', opacity);
-        pulseAnimationId = requestAnimationFrame(animate);
-      }
-      animate();
-    }
-    
-    function stopPulseAnimation() {
-      if (pulseAnimationId !== null) {
-        cancelAnimationFrame(pulseAnimationId);
-        pulseAnimationId = null;
-      }
-      // Reset to base hover opacity
-      if (map.getLayer('master-poly-hover-fill')) {
-        map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', hlOpacity('hoverFill'));
-      }
-    }
-
     function clearHoverHighlight() {
-      stopSizeAnimation();
-      if (!map.getLayer('master-poly-hover-fill')) return;
-      focusActive = false; focusHovId = null; focusGroup = [];
-      map.setFilter('master-poly-hover-fill', ['==','id','__none__']);
-      map.setFilter('master-poly-group-line',  ['==','id','__none__']);
-      if (map.getLayer('master-poly-group-fill'))
-        map.setFilter('master-poly-group-fill', ['==','id','__none__']);
-      if (map.getLayer('master-poly-hover-line'))
-        map.setFilter('master-poly-hover-line', ['==','id','__none__']);
-      // Perustila takaisin: alueet täyteen näkyvyyteen ja verho pois. Nämä
-      // häivyttyvät pehmeästi samaa *-opacity-transitionia pitkin.
+      if (!map.getLayer('master-poly-fill')) return;
+      focusActive = false; focusHovId = null; focusHovLarge = false; focusGroup = [];
+      // Perustila takaisin: alueet täyteen näkyvyyteen, värit ennalleen ja
+      // verho pois. Läpinäkyvyydet häivyttyvät *-opacity-transitionia pitkin.
       applyFocusPaint();
     }
 
@@ -11842,7 +11709,7 @@
       // switch. Otherwise a lingering source sends renderMasterRows/addHalliLayers
       // down their setData() path and the layer is never re-created → nothing
       // shows. Removing first guarantees a fresh re-add in BOTH directions.
-      ['master-poly-fill','master-poly-line','master-poly-boost','master-poly-hover-fill','master-poly-hover-line','master-poly-group-line','master-poly-group-fill','halli-icons','charging-icons']
+      ['master-poly-fill','master-poly-line','master-poly-boost','halli-icons','charging-icons']
         .forEach(id => { if (map.getLayer(id)) { try { map.removeLayer(id); } catch(e){} } });
       ['master-polygons','halli-points','charging-points']
         .forEach(id => { if (map.getSource(id)) { try { map.removeSource(id); } catch(e){} } });
@@ -13276,17 +13143,25 @@
       'community', TA_FREE_LINE, 'hel_ilmainen_pitka', TA_FREE_LINE,
       'hel_ilmainen_lyhyt', TA_FREE_LINE, 'hel_sallittu_kiellon_ulkopuolella', TA_FREE_LINE,
       TA_PAID_LINE];
+    // Viimeksi käytetty aikaehto muistiin, jotta applyFocusPaint voi päivittää
+    // pelkät värit ilman että ajanhetken tila katoaa.
+    let _taFreeExpr = null;
     function applyTimeAwareColors(freeExpr) {
-      const fill = freeExpr ? ['case', freeExpr, TA_FREE_FILL, TA_PAID_FILL] : TA_STATIC_FILL;
-      const line = freeExpr ? ['case', freeExpr, TA_FREE_LINE, TA_PAID_LINE] : TA_STATIC_LINE;
-      if (map.getLayer('master-poly-fill'))       map.setPaintProperty('master-poly-fill', 'fill-color', fill);
-      if (map.getLayer('master-poly-line'))       map.setPaintProperty('master-poly-line', 'line-color', line);
+      if (freeExpr !== undefined) _taFreeExpr = freeExpr;
+      const fill = _taFreeExpr ? ['case', _taFreeExpr, TA_FREE_FILL, TA_PAID_FILL] : TA_STATIC_FILL;
+      const line = _taFreeExpr ? ['case', _taFreeExpr, TA_FREE_LINE, TA_PAID_LINE] : TA_STATIC_LINE;
+      // Valittu alue punaiseksi: ehto kääritään värilausekkeen ympärille, joten
+      // vain VÄRI vaihtuu — leveydet, tasot ja suodattimet pysyvät koskemattomina.
+      const hov = (c, base) => (focusHovId === null || focusHovId === undefined)
+        ? base : ['case', ['==', ['get','id'], focusHovId], c, base];
+      // Isolla aluekokonaisuudella täyttö jää värittömäksi (läpinäkyvä punainen),
+      // jolloin vain reunaviiva ja kaukoviiva muuttuvat punaisiksi.
+      const hovFill = focusHovLarge ? 'rgba(255, 23, 68, 0)' : FOCUS.hoverFillColor;
+      if (map.getLayer('master-poly-fill'))  map.setPaintProperty('master-poly-fill',  'fill-color', hov(hovFill, fill));
+      if (map.getLayer('master-poly-line'))  map.setPaintProperty('master-poly-line',  'line-color', hov(FOCUS.hoverColor, line));
       // Paksunnusviiva seuraa täytön väriä, jotta kaukaa näkyvä pilleri on
       // samaa väriä kuin alue lähellä.
-      if (map.getLayer('master-poly-boost'))      map.setPaintProperty('master-poly-boost', 'line-color', fill);
-      // Ryhmätäyttö ei ole enää musta vaan alueen omaa väriä, joten aiempi
-      // "älä ylikirjoita hoverin aikana" -poikkeus ei ole enää tarpeen.
-      if (map.getLayer('master-poly-group-fill')) map.setPaintProperty('master-poly-group-fill', 'fill-color', fill);
+      if (map.getLayer('master-poly-boost')) map.setPaintProperty('master-poly-boost', 'line-color', hov(FOCUS.hoverColor, fill));
     }
     // Parking garages (halli-icons) are paid parking, so they are shown only when
     // paid areas are shown — i.e. NOT in the free-only view, and NOT in the
@@ -13600,7 +13475,7 @@
     // "Näytä julkiset sähkölatauspisteet" toggle is on. Garages (halli-icons)
     // are handled separately by updateHalliVisibility(), since they also follow
     // the paid/free filter.
-    const PARKING_LAYER_IDS = ['master-poly-fill','master-poly-line','master-poly-boost','master-poly-hover-fill','master-poly-hover-line','master-poly-group-line','master-poly-group-fill','map-dim'];
+    const PARKING_LAYER_IDS = ['master-poly-fill','master-poly-line','master-poly-boost','map-dim'];
     function setParkingLayersVisible(visible){
       PARKING_LAYER_IDS.forEach(id => {
         if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none');
