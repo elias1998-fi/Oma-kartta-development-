@@ -5575,7 +5575,7 @@
     // siitä näkee heti onko selaimessa uusin tiedosto vai välimuistiin jäänyt
     // vanha versio. Sama arvo tulee myös konsoliin ja window.TP_BUILDiin.
     const APP_VERSION = '1.0.0';
-    const APP_BUILD   = '2026-07-30-g';
+    const APP_BUILD   = '2026-07-30-h';
     window.TP_BUILD = APP_BUILD;
     console.log('BUILD: ' + APP_VERSION + ' · ' + APP_BUILD);
     (function writeAboutVersion(){
@@ -6138,10 +6138,15 @@
       const set = (k, v) => { try { m.setConfigProperty('basemap', k, v); } catch(e){} };
       set('lightPreset', preset);
       set('show3dObjects', false);
-      // POI-ikonit + niiden taustapallot pois PÄÄKARTALTA. Standardissa tämä
-      // kytkin vie myös tekstit, joten tekstit piirretään omalla tasolla
-      // (ensurePoiLabelLayer). Sivukartoilla POI:t saavat jäädä ennalleen.
-      if (typeof map !== 'undefined' && m === map) set('showPointOfInterestLabels', false);
+      // POI-ikonit + taustapallot ja Standardin kadunnimet pois PÄÄKARTALTA.
+      // Molemmat piirretään omilla tasoilla (ensureLabelLayers), jotta ne
+      // saadaan mukaan korostustilan himmennykseen. showPlaceLabels jätetään
+      // päälle: paikannimet (Etu-Töölö, Kamppi…) pysyvät ennallaan.
+      // Sivukartoilla kaikki Standardin tekstit saavat jäädä ennalleen.
+      if (typeof map !== 'undefined' && m === map) {
+        set('showPointOfInterestLabels', false);
+        set('showRoadLabels', false);
+      }
       // Yksittäiset 3D-tasot varmistuksena: uudemmissa Standard-versioissa
       // show3dObjects on koontiavain, mutta nämä toimivat myös yksinään.
       ['show3dBuildings','show3dTrees','show3dLandmarks','show3dFacades'].forEach(k => set(k, false));
@@ -6172,7 +6177,7 @@
     // Omat POI-tekstit heti kun tyyli on valmis (ja uudelleen jos tyyli latautuu
     // uusiksi). Slotissa 'top', joten halli-/latauspisteikonit jäävät niiden
     // päälle — ne lisätään myöhemmin samaan slottiin.
-    map.on('style.load', () => { ensurePoiLabelLayer(); applyFocusPaint(); });
+    map.on('style.load', () => { ensureLabelLayers(); applyFocusPaint(); });
 
     // moveLayer voi heittää slot-tasoilla, ja slotit takaavat järjestyksen jo
     // itsessään (ikonit 'top', pysäköintialueet 'middle'), joten siirto on vain
@@ -9609,56 +9614,108 @@
         });
       } catch(e){ console.warn('himmennysverhon lisäys epäonnistui:', e); }
     }
-    // ── POI-tekstit omalla tasolla ────────────────────────────────────
-    // Standardin ainoa POI-säädin on showPointOfInterestLabels, joka piilottaa
-    // ikonin, taustapallon JA tekstin yhdessä — pelkälle ikonille tai värille
-    // ei ole omaa asetusta. Siksi Standardin POI:t sammutetaan pääkartalta ja
-    // tekstit piirretään itse Mapbox Streets v8:n poi_label-tasosta ilman
-    // ikonia. HUOM: tämä on yksi ylimääräinen tiililähde (laskutus).
+    // ── Omat tekstitasot: POI-kohteet ja kadunnimet ───────────────────
+    // Standardin tekstit sijaitsevat slotin 'middle' YLÄPUOLELLA, joten
+    // himmennysverho ei yllä niihin eikä niiden läpinäkyvyyttä voi säätää —
+    // config-kytkimet ovat pelkkiä on/off-valintoja. Siksi ne kaksi ryhmää
+    // jotka halutaan mukaan korostustilaan piirretään itse:
+    //   showPointOfInterestLabels:false + tp-poi-labels  (ravintolat ym.)
+    //   showRoadLabels:false            + tp-road-labels (kadunnimet)
+    // PAIKANNIMET (Etu-Töölö, Kamppi, Leppäsuo…) tulevat Standardin omasta
+    // showPlaceLabels-ryhmästä, jota EI kytketä pois — ne pysyvät siis täysin
+    // ennallaan eivätkä jää taka-alalle. Tämä on tarkoituksellista.
+    // Molemmat omat tasot käyttävät samaa jo ladattua mb-streets-lähdettä,
+    // joten kadunnimet eivät lisää tiilipyyntöjä lainkaan.
     const POI_LABEL_COLOR = '#e6bb62';
     function poiHaloFor(){
       return (MAP_THEMES[mapThemeChoice] === 'day') ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.75)';
     }
-    function ensurePoiLabelLayer(){
-      if (typeof map === 'undefined' || !map || map.getLayer('tp-poi-labels')) return;
+    // Kadunnimet pyritään pitämään lähellä Standardin omaa sävyä.
+    function roadLabelColorFor(){
+      return (MAP_THEMES[mapThemeChoice] === 'day') ? '#5b6068' : '#c8ccd4';
+    }
+    function ensureMbStreetsSource(){
+      if (!map.getSource('mb-streets'))
+        map.addSource('mb-streets', { type:'vector', url:'mapbox://mapbox.mapbox-streets-v8' });
+    }
+    function ensureLabelLayers(){
+      if (typeof map === 'undefined' || !map) return;
       try {
-        if (!map.getSource('mb-streets'))
-          map.addSource('mb-streets', { type:'vector', url:'mapbox://mapbox.mapbox-streets-v8' });
-        map.addLayer({
-          id:'tp-poi-labels', type:'symbol', source:'mb-streets', 'source-layer':'poi_label',
-          slot:'top', minzoom:13,
-          // Tiheys kuten Mapboxin omassa Standard/Streets-tyylissä: filterrank
-          // kertoo kohteen merkittävyyden (1 = tärkein). Raja nousee zoomin
-          // mukana portaittain, jolloin kaukaa näkyvät vain merkittävimmät ja
-          // lähelle mentäessä kaikki. Aiemmin raja oli kiinteä 3 ja tasolla oli
-          // minzoom 15, minkä takia nimet katosivat kokonaan kun zoomasi ulos.
-          // HUOM: zoom-lauseke suodattimen sisällä on sallittu (Mapbox käyttää
-          // samaa kuviota omassa poi-label-tasossaan) toisin kuin paint- ja
-          // layout-ominaisuuksissa.
-          filter:['all',
-            ['has','name'],
-            ['<=', ['coalesce', ['get','filterrank'], 5],
-                   ['step', ['zoom'], 1, 16, 2, 17, 3, 18, 5]]
-          ],
-          layout:{
-            'text-field': ['get','name'],
-            'text-size': ['interpolate', ['linear'], ['zoom'], 13, 11, 16, 12, 20, 13.5],
-            'text-max-width': 8,
-            'text-anchor': 'center',
-            'text-padding': 2,
-            // Pienempi sizerank = merkittävämpi kohde -> voittaa törmäyksen
-            'symbol-sort-key': ['coalesce', ['get','sizerank'], 50]
-          },
-          paint:{
-            'text-color': POI_LABEL_COLOR,
-            'text-halo-color': poiHaloFor(),
-            'text-halo-width': 1.0,
-            'text-emissive-strength': TP_EMISSIVE,
-            'text-opacity': hlOpacity('poiLabel'),
-            'text-opacity-transition': { duration: FOCUS.ms }
-          }
-        });
-      } catch(e){ console.warn('POI-tekstitason lisäys epäonnistui:', e); }
+        ensureMbStreetsSource();
+        // 1) KADUNNIMET ensin, jotta POI-tekstit jäävät niiden päälle.
+        if (!map.getLayer('tp-road-labels')) {
+          map.addLayer({
+            id:'tp-road-labels', type:'symbol', source:'mb-streets', 'source-layer':'road',
+            slot:'top', minzoom:13,
+            // Luokkaportaikko kuten Mapboxin omassa road-label-tasossa:
+            // kaukaa vain pääväylät, lähempänä myös tavalliset kadut.
+            filter:['all',
+              ['has','name'],
+              ['==', ['geometry-type'], 'LineString'],
+              ['step', ['zoom'],
+                ['match', ['get','class'], ['motorway','trunk','primary'], true, false],
+                14, ['match', ['get','class'],
+                     ['motorway','trunk','primary','secondary','tertiary'], true, false],
+                15, ['match', ['get','class'],
+                     ['motorway','trunk','primary','secondary','tertiary',
+                      'street','street_limited','pedestrian'], true, false]
+              ]
+            ],
+            layout:{
+              'symbol-placement': 'line',
+              'text-field': ['get','name'],
+              'text-size': ['interpolate', ['linear'], ['zoom'], 13, 9.5, 16, 10.5, 20, 12],
+              'text-max-angle': 30,
+              'text-padding': 1,
+              'symbol-spacing': 250,
+              'text-rotation-alignment': 'map',
+              'text-pitch-alignment': 'viewport'
+            },
+            paint:{
+              'text-color': roadLabelColorFor(),
+              'text-halo-color': poiHaloFor(),
+              'text-halo-width': 1,
+              'text-halo-blur': 0.5,
+              'text-emissive-strength': TP_EMISSIVE,
+              'text-opacity': hlOpacity('poiLabel'),
+              'text-opacity-transition': { duration: FOCUS.ms },
+              'text-color-transition': { duration: FOCUS.ms }
+            }
+          });
+        }
+        // 2) POI-tekstit kadunnimien päälle.
+        if (!map.getLayer('tp-poi-labels')) {
+          map.addLayer({
+            id:'tp-poi-labels', type:'symbol', source:'mb-streets', 'source-layer':'poi_label',
+            slot:'top', minzoom:13,
+            // filterrank kertoo kohteen merkittävyyden (1 = tärkein). Raja
+            // nousee zoomin mukana portaittain. Rajaa on löysennetty aiemmasta
+            // (oli 1 / 16:2 / 17:3 / 18:5), jotta kohteita näkyy tiheämmin.
+            filter:['all',
+              ['has','name'],
+              ['<=', ['coalesce', ['get','filterrank'], 5],
+                     ['step', ['zoom'], 2, 15, 3, 16, 4, 17, 5]]
+            ],
+            layout:{
+              'text-field': ['get','name'],
+              'text-size': ['interpolate', ['linear'], ['zoom'], 13, 11, 16, 12, 20, 13.5],
+              'text-max-width': 8,
+              'text-anchor': 'center',
+              'text-padding': 2,
+              // Pienempi sizerank = merkittävämpi kohde -> voittaa törmäyksen
+              'symbol-sort-key': ['coalesce', ['get','sizerank'], 50]
+            },
+            paint:{
+              'text-color': POI_LABEL_COLOR,
+              'text-halo-color': poiHaloFor(),
+              'text-halo-width': 1.0,
+              'text-emissive-strength': TP_EMISSIVE,
+              'text-opacity': hlOpacity('poiLabel'),
+              'text-opacity-transition': { duration: FOCUS.ms }
+            }
+          });
+        }
+      } catch(e){ console.warn('tekstitasojen lisäys epäonnistui:', e); }
     }
     function setDim(on){
       if (typeof map === 'undefined' || !map || !map.getLayer(DIM_LAYER)) return;
@@ -9677,9 +9734,16 @@
       // kaikki muu jää taka-alalle.
       set('halli-icons',    'icon-opacity', iconFocusOpacity(focusHalliId));
       set('charging-icons', 'icon-opacity', iconFocusOpacity(focusChargingId));
+      // Omat tekstitasot mukaan korostukseen. Standardin PAIKANNIMET
+      // (Etu-Töölö, Kamppi…) eivät ole näissä eivätkä siis himmene.
       if (map.getLayer('tp-poi-labels')) {
         map.setPaintProperty('tp-poi-labels', 'text-halo-color', poiHaloFor());
         map.setPaintProperty('tp-poi-labels', 'text-opacity', hlOpacity('poiLabel'));
+      }
+      if (map.getLayer('tp-road-labels')) {
+        map.setPaintProperty('tp-road-labels', 'text-color', roadLabelColorFor());
+        map.setPaintProperty('tp-road-labels', 'text-halo-color', poiHaloFor());
+        map.setPaintProperty('tp-road-labels', 'text-opacity', hlOpacity('poiLabel'));
       }
       applyTimeAwareColors();   // valitun alueen punainen väri
       setDim(focusActive);
