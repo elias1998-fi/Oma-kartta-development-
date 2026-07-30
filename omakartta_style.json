@@ -5564,44 +5564,47 @@
   <script>
     console.log('BUILD: 2026-07-08 zoom13-kynnys');
 
-    // ══ PILLERIMUOTOISET PYSÄKÖINTIALUEET ══════════════════════════════
-    // Kartalla piirrettävien alueiden kapeat päädyt pyöristetään puoliympyröiksi,
-    // jolloin pitkänomaisesta suorakulmiosta tulee pilleri (stadion-muoto).
-    // Muunnos tehdään VAIN piirtoa varten — tietokantaan tallennettu
-    // polygon_coordinates säilyy ennallaan, samoin editorin yhdistämislogiikan
-    // käyttämä alkuperäinen geometria.
+    // ══ PYÖRISTETYT KULMAT PYSÄKÖINTIALUEILLE ══════════════════════════
+    // Alueiden kulmat pyöristetään, jolloin teräviä kärkiä ei jää. Muoto EI ole
+    // pilleri: päädyt säilyttävät suoran osuutensa, vain kulmat kaartuvat.
+    // Alueen ulkomitat säilyvät ennallaan — pyöristys vain leikkaa kulmasta.
+    // Muunnos tehdään VAIN piirtoa varten; tietokantaan tallennettu
+    // polygon_coordinates säilyy koskemattomana, samoin editorin
+    // yhdistämislogiikan käyttämä alkuperäinen geometria.
     //
-    // Menetelmä: alueen minimipinta-alaisesta suunnatusta rajauslaatikosta
-    // (OBB) otetaan pitkä akseli u, pituus L ja leveys W. Pilleri = W-levyinen
-    // "makkara" joka on SISÄLLÄ alkuperäisessä laatikossa: suora osuus
-    // pituudeltaan L−W ja molemmissa päissä puoliympyrä säteellä W/2. Alueen
-    // ulkomitat eli pituus ja leveys eivät siis muutu, vain päädyt pyöristyvät.
-    // Laskenta tehdään Mercator-metreissä, joka on konforminen → ympyrä pysyy
-    // ruudulla ympyränä ja pituus/leveys-suhde säilyy oikeana.
-    const PILL_SHAPE = {
-      enabled:   true,      // false = koko muunnos pois, alueet piirtyvät kuten ennen
-      arcSteps:  14,        // segmenttejä per puoliympyrä (isompi = sileämpi, raskaampi)
-      minAspect: 1.5,       // pituus/leveys jonka ALLE jäävät alueet piirretään ennallaan.
-                            // Neliömäisellä kentällä ei ole "kapeaa päätyä", ja pilleri
-                            // muuttaisi sen ympyräksi. Arvo 1.0 = pilleröi kaikki.
-      minFill:   0.60,      // alueen pinta-ala / rajauslaatikon pinta-ala. Alle tämän muoto
-                            // ei ole suora suikale (mutkitteleva/L-kirjaimen muotoinen) →
-                            // jätetään ennalleen ettei oikea muoto katoa.
-      maxWidthM: Infinity   // kapeamman mitan yläraja metreinä; Infinity = ei rajaa
+    // Menetelmä: jokaisesta kärjestä siirrytään matkan d verran molempia
+    // viereisiä sivuja pitkin ja väliin piirretään neliöllinen Bézier-kaari,
+    // jonka kontrollipiste on alkuperäinen kärki. d = pyöristyssäde, joka
+    // suhteutetaan alueen KAPEAMPAAN mittaan (suunnattu rajauslaatikko), jotta
+    // kapea kadunvarsialue ja iso kenttä saavat kumpikin järkevän pyöristyksen.
+    // d rajataan lisäksi 45 %:iin kummankin sivun pituudesta, jottei kahden
+    // vierekkäisen kulman pyöristys mene päällekkäin.
+    // Laskenta Mercator-metreissä (konforminen -> kaaret pysyvät ruudulla
+    // ympyränkaarina ja mittasuhteet oikeina).
+    const ROUND_SHAPE = {
+      enabled:       true,
+      widthFraction: 0.30,  // säde = 30 % kapeammasta mitasta. 2,5 m leveällä
+                            // alueella säde 0,75 m -> päätyyn jää 1,0 m suoraa
+                            // eli 40 % leveydestä. Nosta jos haluat pyöreämmän,
+                            // laske jos haluat terävämmän. 0.5 = pilleri.
+      minMetres:     0.35,  // pienin säde metreinä
+      maxMetres:     3.0,   // suurin säde metreinä (isot kentät)
+      cornerSteps:   5,     // kaaren segmentit per kulma
+      minAngleDeg:   8      // tätä loivempaa taitetta ei pyöristetä lainkaan
     };
-    const _PILL_R = 6378137;
-    const _pillCache = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
-    function _pillToMerc(ll) {
+    const _RC_R = 6378137;
+    const _rcCache = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+    function _rcToMerc(ll) {
       const lat = Math.max(-89.9, Math.min(89.9, ll[1])) * Math.PI / 180;
-      return [_PILL_R * ll[0] * Math.PI / 180,
-              _PILL_R * Math.log(Math.tan(Math.PI / 4 + lat / 2))];
+      return [_RC_R * ll[0] * Math.PI / 180,
+              _RC_R * Math.log(Math.tan(Math.PI / 4 + lat / 2))];
     }
-    function _pillToLngLat(p) {
-      return [p[0] / _PILL_R * 180 / Math.PI,
-              (2 * Math.atan(Math.exp(p[1] / _PILL_R)) - Math.PI / 2) * 180 / Math.PI];
+    function _rcToLngLat(p) {
+      return [p[0] / _RC_R * 180 / Math.PI,
+              (2 * Math.atan(Math.exp(p[1] / _RC_R)) - Math.PI / 2) * 180 / Math.PI];
     }
     // Konveksi peite (Andrew monotone chain)
-    function _pillHull(pts) {
+    function _rcHull(pts) {
       const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
       if (p.length < 3) return p;
       const cr = (o, a, b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]);
@@ -5611,16 +5614,8 @@
       lo.pop(); up.pop();
       return lo.concat(up);
     }
-    function _pillArea(pts) {
-      let a = 0;
-      for (let i = 0, n = pts.length; i < n; i++) {
-        const p = pts[i], q = pts[(i + 1) % n];
-        a += p[0] * q[1] - q[0] * p[1];
-      }
-      return Math.abs(a) / 2;
-    }
-    // Minimipinta-alainen suunnattu rajauslaatikko (rotating calipers)
-    function _pillMinRect(hull) {
+    // Minimipinta-alainen suunnattu rajauslaatikko -> kapeampi mitta
+    function _rcMinRect(hull) {
       let best = null;
       for (let i = 0; i < hull.length; i++) {
         const a = hull[i], b = hull[(i + 1) % hull.length];
@@ -5628,84 +5623,93 @@
         const len = Math.hypot(ex, ey);
         if (len < 1e-9) continue;
         ex /= len; ey /= len;
-        let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+        let mnU = Infinity, mxU = -Infinity, mnV = Infinity, mxV = -Infinity;
         for (const p of hull) {
           const dx = p[0] - a[0], dy = p[1] - a[1];
-          const u = dx * ex + dy * ey, v = -dx * ey + dy * ex;
-          if (u < minU) minU = u; if (u > maxU) maxU = u;
-          if (v < minV) minV = v; if (v > maxV) maxV = v;
+          const u = dx*ex + dy*ey, v = -dx*ey + dy*ex;
+          if (u < mnU) mnU = u; if (u > mxU) mxU = u;
+          if (v < mnV) mnV = v; if (v > mxV) mxV = v;
         }
-        const w = maxU - minU, h = maxV - minV, area = w * h;
-        if (!best || area < best.area) {
-          const cu = (minU + maxU) / 2, cv = (minV + maxV) / 2;
-          best = { area, cx: a[0] + cu*ex - cv*ey, cy: a[1] + cu*ey + cv*ex, ex, ey, w, h };
-        }
+        const w = mxU - mnU, h = mxV - mnV, area = w * h;
+        if (!best || area < best.area)
+          best = { area, w, h, cy: a[1] + ((mnU+mxU)/2)*ey + ((mnV+mxV)/2)*ex };
       }
       return best;
     }
-    // Yksi ulkorengas -> pillerirengas, tai null jos muunnosta ei tehdä.
-    function _pillRing(ring) {
+    // Yksi ulkorengas -> pyöristetty rengas, tai null jos muunnosta ei tehdä.
+    function _rcRing(ring) {
       if (!Array.isArray(ring) || ring.length < 4) return null;
-      const pts = ring.map(_pillToMerc);
+      const pts = ring.map(_rcToMerc);
       const f = pts[0], l = pts[pts.length - 1];
       if (Math.abs(f[0]-l[0]) < 1e-6 && Math.abs(f[1]-l[1]) < 1e-6) pts.pop();
-      if (pts.length < 3) return null;
-      const hull = _pillHull(pts);
-      if (hull.length < 3) return null;
-      const rect = _pillMinRect(hull);
-      if (!rect) return null;
-
-      let ux, uy, L, W;
-      if (rect.w >= rect.h) { ux = rect.ex;  uy = rect.ey; L = rect.w; W = rect.h; }
-      else                  { ux = -rect.ey; uy = rect.ex; L = rect.h; W = rect.w; }
-      if (!(W > 0.05) || !(L > 0.05)) return null;
-      if (L / W < PILL_SHAPE.minAspect) return null;
-      if (_pillArea(pts) / rect.area < PILL_SHAPE.minFill) return null;
-      if (PILL_SHAPE.maxWidthM !== Infinity) {
-        // Mercator-yksiköt ovat 1/cos(lat)-kertoimella liian isoja → skaalataan metreiksi
-        const latRad = _pillToLngLat([rect.cx, rect.cy])[1] * Math.PI / 180;
-        if (W * Math.cos(latRad) > PILL_SHAPE.maxWidthM) return null;
+      // Poista peräkkäiset kaksoiskappaleet, muuten suunta jää määrittelemättä
+      const clean = [];
+      for (const p of pts) {
+        const q = clean[clean.length-1];
+        if (!q || Math.hypot(p[0]-q[0], p[1]-q[1]) > 1e-6) clean.push(p);
       }
+      if (clean.length < 3) return null;
 
-      const r = W / 2;
-      const half = Math.max(0, L / 2 - r);          // 0 → pillerista tulee ympyrä
-      const ax = rect.cx - half*ux, ay = rect.cy - half*uy;
-      const bx = rect.cx + half*ux, by = rect.cy + half*uy;
-      const th = Math.atan2(uy, ux);
-      const N  = Math.max(3, PILL_SHAPE.arcSteps | 0);
-      const out = [];
-      const arc = (cx, cy, from) => {
-        for (let i = 0; i <= N; i++) {
-          const a = from + Math.PI * (i / N);
-          out.push([cx + r*Math.cos(a), cy + r*Math.sin(a)]);
+      const hull = _rcHull(clean);
+      if (hull.length < 3) return null;
+      const rect = _rcMinRect(hull);
+      if (!rect) return null;
+      const W = Math.min(rect.w, rect.h);
+      if (!(W > 0.05)) return null;
+
+      // Mercator-yksiköt ovat 1/cos(lat)-kertoimella metrejä isompia
+      const k = 1 / Math.cos(_rcToLngLat([0, rect.cy])[1] * Math.PI / 180);
+      const r = Math.max(ROUND_SHAPE.minMetres * k,
+                Math.min(ROUND_SHAPE.maxMetres * k, W * ROUND_SHAPE.widthFraction));
+
+      const N = Math.max(2, ROUND_SHAPE.cornerSteps | 0);
+      const straightDot = Math.cos(ROUND_SHAPE.minAngleDeg * Math.PI / 180);
+      const out = [], m = clean.length;
+      for (let i = 0; i < m; i++) {
+        const Pp = clean[(i-1+m) % m], V = clean[i], Nn = clean[(i+1) % m];
+        let ax = V[0]-Pp[0], ay = V[1]-Pp[1];
+        let bx = Nn[0]-V[0], by = Nn[1]-V[1];
+        const la = Math.hypot(ax,ay), lb = Math.hypot(bx,by);
+        if (la < 1e-9 || lb < 1e-9) { out.push(V); continue; }
+        ax /= la; ay /= la; bx /= lb; by /= lb;
+        // Lähes suora kohta -> ei kulmaa, ei pyöristystä (esim. tiheät
+        // välipisteet mutkittelevan suikaleen pitkillä sivuilla)
+        if (ax*bx + ay*by > straightDot) { out.push(V); continue; }
+        const d = Math.min(r, 0.45*la, 0.45*lb);
+        if (!(d > 1e-9)) { out.push(V); continue; }
+        const A = [V[0]-d*ax, V[1]-d*ay];
+        const B = [V[0]+d*bx, V[1]+d*by];
+        for (let t = 0; t <= N; t++) {
+          const u = t/N, mu = 1-u;
+          out.push([mu*mu*A[0] + 2*mu*u*V[0] + u*u*B[0],
+                    mu*mu*A[1] + 2*mu*u*V[1] + u*u*B[1]]);
         }
-      };
-      arc(bx, by, th - Math.PI/2);   // +u-pääty, vastapäivään
-      arc(ax, ay, th + Math.PI/2);   // -u-pääty
+      }
+      if (out.length < 3) return null;
       out.push(out[0].slice());
-      return out.map(_pillToLngLat);
+      return out.map(_rcToLngLat);
     }
-    // Julkinen apuri: Polygon / MultiPolygon -> pillerimuotoinen kopio.
-    // Palauttaa ALKUPERÄISEN objektin jos muunnosta ei tehdä (ei turhia kopioita).
-    function pillifyGeometry(geom) {
-      if (!PILL_SHAPE.enabled || !geom) return geom;
-      if (_pillCache && _pillCache.has(geom)) return _pillCache.get(geom);
+    // Julkinen apuri: Polygon / MultiPolygon -> pyöristetty kopio.
+    // Palauttaa ALKUPERÄISEN objektin jos muunnosta ei tehdä.
+    function roundPolygonCorners(geom) {
+      if (!ROUND_SHAPE.enabled || !geom) return geom;
+      if (_rcCache && _rcCache.has(geom)) return _rcCache.get(geom);
       let outGeom = geom;
       try {
         if (geom.type === 'Polygon') {
-          const r = _pillRing(geom.coordinates && geom.coordinates[0]);
+          const r = _rcRing(geom.coordinates && geom.coordinates[0]);
           if (r) outGeom = { type:'Polygon', coordinates:[r] };
         } else if (geom.type === 'MultiPolygon') {
           let changed = false;
           const polys = (geom.coordinates || []).map(poly => {
-            const r = _pillRing(poly && poly[0]);
+            const r = _rcRing(poly && poly[0]);
             if (r) { changed = true; return [r]; }
             return poly;
           });
           if (changed) outGeom = { type:'MultiPolygon', coordinates:polys };
         }
-      } catch (e) { console.warn('pillifyGeometry epäonnistui:', e); outGeom = geom; }
-      if (_pillCache) { try { _pillCache.set(geom, outGeom); } catch (_) {} }
+      } catch (e) { console.warn('roundPolygonCorners epäonnistui:', e); outGeom = geom; }
+      if (_rcCache) { try { _rcCache.set(geom, outGeom); } catch (_) {} }
       return outGeom;
     }
     // ═══════════════════════════════════════════════════════════════════
@@ -6115,6 +6119,10 @@
       const set = (k, v) => { try { m.setConfigProperty('basemap', k, v); } catch(e){} };
       set('lightPreset', preset);
       set('show3dObjects', false);
+      // POI-ikonit + niiden taustapallot pois PÄÄKARTALTA. Standardissa tämä
+      // kytkin vie myös tekstit, joten tekstit piirretään omalla tasolla
+      // (ensurePoiLabelLayer). Sivukartoilla POI:t saavat jäädä ennalleen.
+      if (typeof map !== 'undefined' && m === map) set('showPointOfInterestLabels', false);
       // Yksittäiset 3D-tasot varmistuksena: uudemmissa Standard-versioissa
       // show3dObjects on koontiavain, mutta nämä toimivat myös yksinään.
       ['show3dBuildings','show3dTrees','show3dLandmarks','show3dFacades'].forEach(k => set(k, false));
@@ -6142,6 +6150,10 @@
     });
     map.touchZoomRotate.disableRotation();
     bindBasemapConfig(map);
+    // Omat POI-tekstit heti kun tyyli on valmis (ja uudelleen jos tyyli latautuu
+    // uusiksi). Slotissa 'top', joten halli-/latauspisteikonit jäävät niiden
+    // päälle — ne lisätään myöhemmin samaan slottiin.
+    map.on('style.load', () => { ensurePoiLabelLayer(); applyFocusPaint(); });
 
     // moveLayer voi heittää slot-tasoilla, ja slotit takaavat järjestyksen jo
     // itsessään (ikonit 'top', pysäköintialueet 'middle'), joten siirto on vain
@@ -6763,7 +6775,7 @@
                      r.parking_type !== 'Pysäköintihalli')
         .map(r => ({ type:'Feature',
           properties:{ source: legacySourceFor(r.area_type, r.parking_type, r.max_hours) },
-          geometry: pillifyGeometry(r.polygon_coordinates) }));
+          geometry: roundPolygonCorners(r.polygon_coordinates) }));
       return { type:'FeatureCollection', features };
     }
     function ensureExistingAreaLayers() {
@@ -8525,7 +8537,7 @@
       const rows = (typeof _lastMasterRows !== 'undefined' && _lastMasterRows) ? _lastMasterRows : [];
       return { type:'FeatureCollection', features: rows
         .filter(r => r.polygon_coordinates && (r.polygon_coordinates.type==='Polygon'||r.polygon_coordinates.type==='MultiPolygon') && r.parking_type !== 'Pysäköintihalli')
-        .map(r => ({ type:'Feature', properties:{ source: legacySourceFor(r.area_type, r.parking_type, r.max_hours) }, geometry: pillifyGeometry(r.polygon_coordinates) })) };
+        .map(r => ({ type:'Feature', properties:{ source: legacySourceFor(r.area_type, r.parking_type, r.max_hours) }, geometry: roundPolygonCorners(r.polygon_coordinates) })) };
     }
     function adminSetMasterAreas() {
       if (!adminPreviewMap) return;
@@ -9218,7 +9230,7 @@
               valid_su_to: r.valid_su_to ?? '',
               ...validityProps(r)
             },
-            geometry: pillifyGeometry(r.polygon_coordinates)
+            geometry: roundPolygonCorners(r.polygon_coordinates)
           }));
 
         const geojson = { type: 'FeatureCollection', features };
@@ -9269,23 +9281,18 @@
             'fill-color': AREA_FILL_EXPR
           }
         });
-        // Vastaaville alueille EI omaa korostustasoa: ne erottuvat pelkästään
-        // siitä että ne pysyvät täydessä näkyvyydessä (focusCase antaa arvon 1)
-        // kun muut alueet ja taustakartta himmenevät. Aiemmat
-        // master-poly-group-fill ja -group-line on poistettu.
-        // 4) Valitun alueen punainen täyttö (50 %)
-        map.addLayer({ id:'master-poly-hover-fill', type:'fill', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'fill-emissive-strength': TP_EMISSIVE,
-            'fill-color': FOCUS.hoverColor, 'fill-opacity': hlOpacity('hoverFill') },
-          filter:['==', ['get','id'], '__none__']
-        });
-        // 5) Valitun alueen punainen reunus päällimmäisenä
-        map.addLayer({ id:'master-poly-hover-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
+        // 4) VALITUN ALUEEN punainen reunaviiva, täytön PÄÄLLÄ. Näkyy vain
+        //    korostustilassa (line-opacity), leveys riippuu vain zoomista.
+        //    Koska se on täytön päällä, 50 % punainen täyttö ei voi paljastaa
+        //    mitään sen alta -> reuna on täsmälleen yhtä paksu kuin muiden
+        //    alueiden musta reunaviiva.
+        map.addLayer({ id:'master-poly-sel-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
           paint:{ 'line-emissive-strength': TP_EMISSIVE,
-            'line-color': FOCUS.hoverColor, 'line-width': HOVER_LINE_WIDTH,
-            'line-opacity': hlOpacity('hoverLine') },
-          layout:{ 'line-join':'round', 'line-cap':'round' },
-          filter:['==', ['get','id'], '__none__']
+            'line-width': SEL_WIDTH, 'line-color': FOCUS.hoverColor,
+            'line-opacity': hlOpacity('selLine'),
+            'line-opacity-transition': { duration: FOCUS.ms }
+          },
+          layout:{ 'line-join':'round', 'line-cap':'round' }
         });
         // Apply current filter state (free areas hidden by default until enabled)
         applyRangeFilter();
@@ -9364,6 +9371,12 @@
         }
         _hiChargingId = cId;
       }
+      // Valittu halli / latauspiste nostaa kaiken muun taka-alalle samalla
+      // tavalla kuin pysäköintialueen korostus.
+      if (focusHalliId !== hId || focusChargingId !== cId) {
+        focusHalliId = hId; focusChargingId = cId;
+        refreshFocus();
+      }
     }
 
     // Returns all feature IDs that share the same "group" as the given props
@@ -9397,10 +9410,9 @@
 
     // ══ KOROSTUSTILA ("focus") ═════════════════════════════════════════
     // Kun p-merkki on alueen päällä, näkymä jakautuu kolmeen:
-    //   1) VALITTU alue      -> punainen täyttö 50 % + punainen reunus
-    //   2) SAMOILLA TIEDOILLA olevat alueet -> täysi näkyvyys omassa värissään
-    //      (ei tummansinistä täyttöä eikä paksunnettua reunaviivaa — reunan
-    //      paksuus riippuu vain zoomista)
+    //   1) VALITTU alue      -> täyttö 50 % punaista, reunaviiva punainen
+    //                          (SAMALLA leveydellä kuin musta on muutenkin)
+    //   2) SAMOILLA TIEDOILLA olevat alueet -> täysin ennallaan
     //   3) KAIKKI MUU        -> muut alueet himmenevät ja taustakartan päälle
     //      nousee himmennysverho, jolloin kartta jää taka-alalle
     // Siirtymä on pehmeä: läpinäkyvyydet on sidottu *-opacity-transitioniin,
@@ -9408,14 +9420,28 @@
     // (punainen ja ryhmäreunus) on tarkoituksella VÄLITÖN, jotta valinta
     // vastaa heti p-merkin liikkeeseen — vain tunnelma hiipuu.
     const FOCUS = {
-      ms:         280,        // siirtymän kesto (ms)
-      hoverColor: '#ff1744',  // valitun alueen punainen
-      hoverFill:  0.50,       // punaisen täytön läpinäkyvyys
-      dimFill:    0.30,       // muiden alueiden täyttö korostustilassa
-      dimLine:    0.30,       // muiden alueiden reunaviiva
-      dimBoost:   0.30,       // muiden alueiden paksunnusviiva
-      scrim:      0.40        // taustakartan himmennys
+      ms:             280,                      // siirtymän kesto (ms)
+      hoverColor:     '#ff1744',                // valitun alueen reunaviiva + kaukoviiva
+      hoverFillColor: 'rgba(255, 23, 68, 0.5)', // valitun alueen täyttö, 50 %
+      dimFill:        0.30,                     // muiden alueiden täyttö korostustilassa
+      dimLine:        0,                        // muiden alueiden reunaviiva (ks. alla)
+      dimBoost:       0.30,                     // muiden alueiden paksunnusviiva
+      dimIcon:        0.25,                     // halli-/latauspisteikonit taka-alalle
+      dimPoi:         0.30,                     // POI-tekstit taka-alalle
+      scrim:          0.40                      // taustakartan himmennys
     };
+    // MIKSI dimLine = 0: musta reunaviiva piirretään täytön ALLA, ja normaalisti
+    // peittävä täyttö kätkee sen sisäpuolen -> näkyviin jää vain ulkopuolinen
+    // 1 px. Kun täyttö muuttuu puoliläpinäkyväksi, viivan SISÄPUOLI alkaa näkyä
+    // täytön läpi ja reuna näyttää tuplaantuvan. Sama koski VALITTUA aluetta,
+    // jonka täyttö on 50 % punaista: sen alla ollut punainen reunaviiva näkyi
+    // sekä ulko- että sisäpuolelta eli tuplana.
+    //
+    // Ratkaisu: korostustilassa perusreunaviiva (master-poly-line) piirretään
+    // VAIN samoilla tiedoilla oleville alueille. Valittu alue saa oman ohuen
+    // reunaviivansa master-poly-sel-line-tasolta, joka piirretään täytön
+    // PÄÄLLE — silloin läpinäkyvyys ei voi paljastaa mitään sen alta ja viiva
+    // on täsmälleen yhtä paksu kuin musta reunaviiva muilla alueilla.
 
     // ── Alueiden näkyvyys kaukaa: kolmiosainen piirto ─────────────────
     // Kadunvarsialue on ~2,5 m leveä. Zoomilla 13 se on noin 0,25 pikseliä,
@@ -9442,9 +9468,14 @@
         out.push(stops[i], ['case', IS_LARGE_EXPR, stops[i+2], stops[i+1]]);
       return out;
     }
-    const RIM_WIDTH        = zwLarge([13, 7.0, 3.0,  15, 5.0, 2.5,  16.5, 3.0, 2.0,  18, 2.0, 2.0]);
-    const BOOST_WIDTH      = zwLarge([13, 5.0, 1.0,  15, 3.2, 0.6,  16.5, 1.2, 0.0,  18, 0.0, 0.0]);
-    const HOVER_LINE_WIDTH = zw([13, 8.0, 15, 6.0, 16.5, 4.0, 18, 2.5]);
+    // Musta reunaviiva pysyy aina 1 px leveämpänä kuin paksunnusviiva molemmin
+    // puolin, eli (RIM − BOOST) / 2 = 1,0 px joka zoomilla.
+    const RIM_WIDTH        = zwLarge([13, 7.0, 3.0,  15, 5.2, 2.6,  16, 3.9, 2.3,  16.5, 2.0, 2.0,  18, 2.0, 2.0]);
+    const BOOST_WIDTH      = zwLarge([13, 5.0, 1.0,  15, 3.2, 0.6,  16, 1.9, 0.3,  16.5, 0.0, 0.0]);
+    // Valitun alueen punainen reunaviiva. Kaukana se on yhtä leveä kuin musta
+    // rimma (peittää punaisen paksunnusviivan — punaista punaisen päälle, ei
+    // saumaa), lähellä 1 px. Piirretään täytön PÄÄLLE.
+    const SEL_WIDTH        = zwLarge([13, 7.0, 3.0,  15, 5.2, 2.6,  16, 3.0, 2.3,  16.5, 1.0, 1.0,  18, 1.0, 1.0]);
 
     // Alueen väri lähdetyypin mukaan — sama lauseke täytölle, boost-viivalle
     // ja ryhmätäytölle, jotta värit eivät pääse eriytymään.
@@ -9463,34 +9494,53 @@
 
     // ── Korostustilan tila ────────────────────────────────────────────
     let focusActive = false;   // onko p-merkki jonkin alueen päällä
-    let focusHovId  = null;    // valitun alueen id
-    let focusGroup  = [];      // samoilla tiedoilla olevien id:t (ilman valittua)
+    let focusPoly     = false; // onko p-merkki pysäköintialueen päällä
+    let focusHovId    = null;  // valitun alueen id
+    let focusHovLarge = false; // onko valittu alue "iso aluekokonaisuus"
+    let focusGroup    = [];    // samoilla tiedoilla olevien id:t (ilman valittua)
+    let focusHalliId    = null; // valittu pysäköintihalli
+    let focusChargingId = null; // valittu latauspiste
 
-    // Kolmiportainen läpinäkyvyyslauseke perustasoille:
-    //   valittu -> hovValue (0 = piilotettu, punainen piirtyy tilalle)
-    //   ryhmä   -> 1 (täysi näkyvyys)
-    //   muut    -> dimValue
-    function focusCase(dimValue, hovValue){
+    // Läpinäkyvyyslauseke perustasoille: valittu alue ja sen kanssa samoilla
+    // tiedoilla olevat säilyttävät täyden näkyvyyden, muut himmenevät.
+    function focusCase(dimValue){
       if (!focusActive) return 1;
-      const parts = ['case'];
+      const conds = [];
       if (focusHovId !== null && focusHovId !== undefined)
-        parts.push(['==', ['get','id'], focusHovId], hovValue);
+        conds.push(['==', ['get','id'], focusHovId]);
       if (focusGroup.length)
-        parts.push(['in', ['get','id'], ['literal', focusGroup]], 1);
-      if (parts.length === 1) return dimValue;   // ['case'] ilman ehtoja ei kelpaa
+        conds.push(['in', ['get','id'], ['literal', focusGroup]]);
+      if (!conds.length) return dimValue;        // ['case'] ilman ehtoja ei kelpaa
+      const parts = ['case'];
+      conds.forEach(c => parts.push(c, 1));
       parts.push(dimValue);
       return parts;
     }
     // Yksi paikka josta jokainen taso kysyy läpinäkyvyytensä. Kutsutaan sekä
     // tasoja luotaessa (focusActive = false -> kaikki 1) että korostuksen
     // vaihtuessa.
+    // Vain ryhmä saa arvon 1 — valittu alue jää tähän pois, koska sen
+    // reunaviiva tulee omalta tasoltaan täytön päältä.
+    function focusGroupOnly(dimValue){
+      if (!focusActive) return 1;
+      if (!focusGroup.length) return dimValue;
+      return ['case', ['in', ['get','id'], ['literal', focusGroup]], 1, dimValue];
+    }
+    // Ikonit (halli / latauspiste): valittu pysyy täytenä, muut himmenevät.
+    function iconFocusOpacity(selId){
+      if (!focusActive) return 1;
+      if (selId === null || selId === undefined) return FOCUS.dimIcon;
+      return ['case', ['==', ['get','id'], selId], 1, FOCUS.dimIcon];
+    }
     function hlOpacity(key){
       switch (key) {
-        case 'baseFill':  return focusCase(FOCUS.dimFill,  0);
-        case 'baseLine':  return focusCase(FOCUS.dimLine,  0);
-        case 'boost':     return focusCase(FOCUS.dimBoost, 0);
-        case 'hoverFill': return FOCUS.hoverFill;
-        default:          return 1;   // hoverLine
+        case 'baseFill': return focusCase(FOCUS.dimFill);
+        case 'baseLine': return focusGroupOnly(FOCUS.dimLine);
+        case 'boost':    return focusCase(FOCUS.dimBoost);
+        case 'selLine':  return (focusActive && focusHovId !== null && focusHovId !== undefined)
+                                ? ['case', ['==', ['get','id'], focusHovId], 1, 0] : 0;
+        case 'poiLabel': return focusActive ? FOCUS.dimPoi : 1;
+        default:         return 1;
       }
     }
 
@@ -9524,6 +9574,46 @@
         });
       } catch(e){ console.warn('himmennysverhon lisäys epäonnistui:', e); }
     }
+    // ── POI-tekstit omalla tasolla ────────────────────────────────────
+    // Standardin ainoa POI-säädin on showPointOfInterestLabels, joka piilottaa
+    // ikonin, taustapallon JA tekstin yhdessä — pelkälle ikonille tai värille
+    // ei ole omaa asetusta. Siksi Standardin POI:t sammutetaan pääkartalta ja
+    // tekstit piirretään itse Mapbox Streets v8:n poi_label-tasosta ilman
+    // ikonia. HUOM: tämä on yksi ylimääräinen tiililähde (laskutus).
+    const POI_LABEL_COLOR = '#e6bb62';
+    function poiHaloFor(){
+      return (MAP_THEMES[mapThemeChoice] === 'day') ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.75)';
+    }
+    function ensurePoiLabelLayer(){
+      if (typeof map === 'undefined' || !map || map.getLayer('tp-poi-labels')) return;
+      try {
+        if (!map.getSource('mb-streets'))
+          map.addSource('mb-streets', { type:'vector', url:'mapbox://mapbox.mapbox-streets-v8' });
+        map.addLayer({
+          id:'tp-poi-labels', type:'symbol', source:'mb-streets', 'source-layer':'poi_label',
+          slot:'top', minzoom:15,
+          // filterrank karsii vähäpätöisimmät kohteet, muuten teksti ruuhkautuu
+          filter:['all', ['has','name'], ['<=', ['coalesce', ['get','filterrank'], 0], 3]],
+          layout:{
+            'text-field': ['get','name'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10.5, 18, 12.5],
+            'text-max-width': 8,
+            'text-anchor': 'center',
+            'text-padding': 4,
+            'text-optional': true,
+            'symbol-sort-key': ['coalesce', ['get','sizerank'], 50]
+          },
+          paint:{
+            'text-color': POI_LABEL_COLOR,
+            'text-halo-color': poiHaloFor(),
+            'text-halo-width': 1.0,
+            'text-emissive-strength': TP_EMISSIVE,
+            'text-opacity': hlOpacity('poiLabel'),
+            'text-opacity-transition': { duration: FOCUS.ms }
+          }
+        });
+      } catch(e){ console.warn('POI-tekstitason lisäys epäonnistui:', e); }
+    }
     function setDim(on){
       if (typeof map === 'undefined' || !map || !map.getLayer(DIM_LAYER)) return;
       map.setPaintProperty(DIM_LAYER, 'fill-color', dimColorFor());
@@ -9532,136 +9622,51 @@
     // Päivittää kaikki korostustilasta riippuvat läpinäkyvyydet kerralla.
     function applyFocusPaint(){
       const set = (id, prop, val) => { if (map.getLayer(id)) map.setPaintProperty(id, prop, val); };
-      set('master-poly-fill',  'fill-opacity', hlOpacity('baseFill'));
-      set('master-poly-line',  'line-opacity', hlOpacity('baseLine'));
-      set('master-poly-boost', 'line-opacity', hlOpacity('boost'));
+      set('master-poly-fill',     'fill-opacity', hlOpacity('baseFill'));
+      set('master-poly-line',     'line-opacity', hlOpacity('baseLine'));
+      set('master-poly-boost',    'line-opacity', hlOpacity('boost'));
+      set('master-poly-sel-line', 'line-opacity', hlOpacity('selLine'));
+      // Hallien ja latauspisteiden ikonit mukaan samaan korostuslogiikkaan:
+      // ne himmenevät kun jokin alue korostuu, ja kun ikoni itse on valittuna,
+      // kaikki muu jää taka-alalle.
+      set('halli-icons',    'icon-opacity', iconFocusOpacity(focusHalliId));
+      set('charging-icons', 'icon-opacity', iconFocusOpacity(focusChargingId));
+      if (map.getLayer('tp-poi-labels')) {
+        map.setPaintProperty('tp-poi-labels', 'text-halo-color', poiHaloFor());
+        map.setPaintProperty('tp-poi-labels', 'text-opacity', hlOpacity('poiLabel'));
+      }
+      applyTimeAwareColors();   // valitun alueen punainen väri
       setDim(focusActive);
+    }
+    // Laskee korostustilan kolmesta lähteestä: pysäköintialue, halli, latauspiste.
+    function refreshFocus(){
+      focusActive = focusPoly
+        || (focusHalliId    !== null && focusHalliId    !== undefined)
+        || (focusChargingId !== null && focusChargingId !== undefined);
+      applyFocusPaint();
     }
 
     function applyHoverHighlight(props) {
-      if (!map.getLayer('master-poly-hover-fill')) return;
+      if (!map.getLayer('master-poly-fill')) return;
       const hovId = props.id;   // säilytä alkuperäinen tyyppi: numero / 'ilm_X'
-      // "Iso aluekokonaisuus": ei punaista täyttöä (vain punainen reunus) eikä
-      // ryhmäkorostusta — muuten koko näkymä värjäytyisi.
+      // "Iso aluekokonaisuus": ei punaista täyttöä (muuten koko näkymä
+      // värjäytyisi) eikä ryhmäkorostusta — vain punainen reunaviiva.
       const _isLarge = props.large_area === true || props.large_area === 'true';
-      const groupIds = _isLarge ? [] : getSameGroupIds(props).filter(id => id !== hovId);
 
-      focusActive = true;
-      focusHovId  = (hovId === undefined) ? null : hovId;
-      focusGroup  = groupIds;
-
-      // 1) Valittu alue: punainen täyttö 50 % + punainen reunus. Alueen oma
-      //    täyttö, boost ja musta reunus menevät nollaan (focusCase), joten
-      //    punainen ei sekoitu alla olevaan vihreään/siniseen.
-      map.setPaintProperty('master-poly-hover-fill', 'fill-color', FOCUS.hoverColor);
-      map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', hlOpacity('hoverFill'));
-      map.setFilter('master-poly-hover-fill',
-        (hovId && !_isLarge) ? ['==', ['get','id'], hovId] : ['==','id','__none__']
-      );
-      if (map.getLayer('master-poly-hover-line')) {
-        map.setPaintProperty('master-poly-hover-line', 'line-color', FOCUS.hoverColor);
-        map.setPaintProperty('master-poly-hover-line', 'line-opacity', 1);
-        map.setFilter('master-poly-hover-line',
-          hovId ? ['==', ['get','id'], hovId] : ['==','id','__none__']
-        );
-      }
-
-      // 2) Samoilla tiedoilla olevat alueet: ei omaa korostustasoa eikä
-      //    paksunnettua reunaviivaa. Ne pysyvät perustilan näköisinä (focusCase
-      //    antaa niille arvon 1) ja erottuvat siitä, että kaikki muu himmenee.
-      //    Reunaviivan paksuus riippuu siis pelkästään zoomista, ei hoverista.
-
-      // 3) Kaikki muu hiipuu: muut alueet himmenevät ja verho nousee kartan
-      //    päälle. Nämä kulkevat *-opacity-transitionin läpi -> pehmeä siirtymä.
-      applyFocusPaint();
-    }
-
-    let sizeAnimationId = null;
-    function startSizeAnimation() {
-      stopSizeAnimation();
-      const startTime = Date.now();
-      const cycleDuration = 2000; // 2 seconds per pulse cycle
-
-      function animate() {
-        if (!map.getLayer('master-poly-hover-fill')) return;
-        const elapsed = Date.now() - startTime;
-        const progress = (elapsed % cycleDuration) / cycleDuration;
-        const sineValue = 0.5 + 0.5 * Math.sin(progress * Math.PI * 2);
-        // Pulse opacity between 0.90 and 0.70 (vivid red)
-        const opacity = 0.90 - 0.20 * sineValue;
-        map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', opacity);
-        sizeAnimationId = requestAnimationFrame(animate);
-      }
-      animate();
-    }
-
-    function stopSizeAnimation() {
-      if (sizeAnimationId !== null) {
-        cancelAnimationFrame(sizeAnimationId);
-        sizeAnimationId = null;
-      }
-      if (map.getLayer('master-poly-hover-fill')) {
-        map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', hlOpacity('hoverFill'));
-      }
-    }
-
-    let pulseAnimationId = null;
-    function startPulseAnimation() {
-      stopPulseAnimation();
-      const startTime = Date.now();
-      const bounceDuration = 2000; // 2 seconds per bounce cycle
-      
-      function animate() {
-        if (!map.getLayer('master-poly-hover-fill')) return;
-        const elapsed = Date.now() - startTime;
-        const progress = (elapsed % bounceDuration) / bounceDuration;
-        
-        // Bounce pattern: two quick pops then rest
-        // First pop at 0-0.15, second pop at 0.2-0.35, rest 0.35-1.0
-        let opacity;
-        if (progress < 0.15) {
-          // First pop: quick rise and fall
-          const t = progress / 0.15;
-          opacity = 0.30 + 0.15 * Math.sin(t * Math.PI);
-        } else if (progress < 0.2) {
-          // Brief dip between pops
-          opacity = 0.30;
-        } else if (progress < 0.35) {
-          // Second pop: quick rise and fall
-          const t = (progress - 0.2) / 0.15;
-          opacity = 0.30 + 0.15 * Math.sin(t * Math.PI);
-        } else {
-          // Rest period - stay at base
-          opacity = 0.30;
-        }
-        
-        map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', opacity);
-        pulseAnimationId = requestAnimationFrame(animate);
-      }
-      animate();
-    }
-    
-    function stopPulseAnimation() {
-      if (pulseAnimationId !== null) {
-        cancelAnimationFrame(pulseAnimationId);
-        pulseAnimationId = null;
-      }
-      // Reset to base hover opacity
-      if (map.getLayer('master-poly-hover-fill')) {
-        map.setPaintProperty('master-poly-hover-fill', 'fill-opacity', hlOpacity('hoverFill'));
-      }
+      focusPoly     = true;
+      focusHovId    = (hovId === undefined) ? null : hovId;
+      focusHovLarge = _isLarge;
+      focusGroup    = _isLarge ? [] : getSameGroupIds(props).filter(id => id !== hovId);
+      refreshFocus();
     }
 
     function clearHoverHighlight() {
-      stopSizeAnimation();
-      if (!map.getLayer('master-poly-hover-fill')) return;
-      focusActive = false; focusHovId = null; focusGroup = [];
-      map.setFilter('master-poly-hover-fill', ['==','id','__none__']);
-      if (map.getLayer('master-poly-hover-line'))
-        map.setFilter('master-poly-hover-line', ['==','id','__none__']);
-      // Perustila takaisin: alueet täyteen näkyvyyteen ja verho pois. Nämä
-      // häivyttyvät pehmeästi samaa *-opacity-transitionia pitkin.
-      applyFocusPaint();
+      if (!map.getLayer('master-poly-fill')) return;
+      focusPoly = false; focusHovId = null; focusHovLarge = false; focusGroup = [];
+      // Perustila takaisin: alueet täyteen näkyvyyteen, värit ennalleen ja
+      // verho pois. Läpinäkyvyydet häivyttyvät *-opacity-transitionia pitkin.
+      // HUOM: ei nollaa halli-/latauspistekorostusta — se elää omaa elämäänsä.
+      refreshFocus();
     }
 
     // Real-time center P-marker detection (no lock, immediate response)
@@ -10230,6 +10235,7 @@
       map.addSource('halli-points', { type:'geojson', data: geojson });
       map.addLayer({
         id: 'halli-icons', type: 'symbol', source: 'halli-points', minzoom: 13, slot: 'top',
+        paint: { 'icon-opacity': iconFocusOpacity(focusHalliId), 'icon-opacity-transition': { duration: FOCUS.ms } },
         layout: {
           'icon-image': ['step', ['zoom'], 'halli-plain', 14, 'halli-icon'],
           'icon-size': ['interpolate', ['linear'], ['zoom'], 13.99, 0.25, 14, 0.675],
@@ -10528,10 +10534,10 @@
 
       // HUOM: editorAllFeatures säilyy ALKUPERÄISENÄ geometriana, koska
       // buildMergedGeom() kirjoittaa siitä yhdistetyn alueen tietokantaan.
-      // Pilleröinti tehdään vasta tähän piirrettävään kopioon.
+      // Pyöristys tehdään vasta tähän piirrettävään kopioon.
       const geojson = { type:'FeatureCollection',
         features: editorAllFeatures.map(f => ({ type:'Feature', properties:f.properties,
-                                                geometry: pillifyGeometry(f.geometry) })) };
+                                                geometry: roundPolygonCorners(f.geometry) })) };
 
       if (editorMap.getSource('editor-all')) {
         editorMap.getSource('editor-all').setData(geojson);
@@ -11815,7 +11821,7 @@
       // switch. Otherwise a lingering source sends renderMasterRows/addHalliLayers
       // down their setData() path and the layer is never re-created → nothing
       // shows. Removing first guarantees a fresh re-add in BOTH directions.
-      ['master-poly-fill','master-poly-line','master-poly-boost','master-poly-hover-fill','master-poly-hover-line','halli-icons','charging-icons']
+      ['master-poly-fill','master-poly-line','master-poly-boost','master-poly-sel-line','halli-icons','charging-icons']
         .forEach(id => { if (map.getLayer(id)) { try { map.removeLayer(id); } catch(e){} } });
       ['master-polygons','halli-points','charging-points']
         .forEach(id => { if (map.getSource(id)) { try { map.removeSource(id); } catch(e){} } });
@@ -11875,8 +11881,8 @@
         (typeof adminPreviewMap  !== 'undefined') ? adminPreviewMap  : null,
         (typeof locEditMap       !== 'undefined') ? locEditMap       : null
       ].forEach(m => applyBasemapConfig(m, choice));
-      // Himmennysverho on tumma yötilassa ja vaalea päivätilassa.
-      try { setDim(focusActive); } catch(e){}
+      // Verho ja POI-tekstien halo ovat teemasidonnaisia.
+      try { applyFocusPaint(); } catch(e){}
     }
     // Näytä tallennettu teema asetusvalitsimessa käynnistyksessä.
     (function(){
@@ -13228,7 +13234,8 @@
       const f = parts.length === 1 ? null : parts;
       map.setFilter('master-poly-fill', f);
       map.setFilter('master-poly-line', f);
-      if (map.getLayer('master-poly-boost')) map.setFilter('master-poly-boost', f);
+      if (map.getLayer('master-poly-boost'))    map.setFilter('master-poly-boost', f);
+      if (map.getLayer('master-poly-sel-line')) map.setFilter('master-poly-sel-line', f);
       applyTimeAwareColors(freeAtRef);
       updateHalliVisibility();   // garages are paid → follow the paid/free filter
       updateResetBtnVisibility();
@@ -13249,14 +13256,25 @@
       'community', TA_FREE_LINE, 'hel_ilmainen_pitka', TA_FREE_LINE,
       'hel_ilmainen_lyhyt', TA_FREE_LINE, 'hel_sallittu_kiellon_ulkopuolella', TA_FREE_LINE,
       TA_PAID_LINE];
+    // Viimeksi käytetty aikaehto muistiin, jotta applyFocusPaint voi päivittää
+    // pelkät värit ilman että ajanhetken tila katoaa.
+    let _taFreeExpr = null;
     function applyTimeAwareColors(freeExpr) {
-      const fill = freeExpr ? ['case', freeExpr, TA_FREE_FILL, TA_PAID_FILL] : TA_STATIC_FILL;
-      const line = freeExpr ? ['case', freeExpr, TA_FREE_LINE, TA_PAID_LINE] : TA_STATIC_LINE;
-      if (map.getLayer('master-poly-fill'))       map.setPaintProperty('master-poly-fill', 'fill-color', fill);
-      if (map.getLayer('master-poly-line'))       map.setPaintProperty('master-poly-line', 'line-color', line);
+      if (freeExpr !== undefined) _taFreeExpr = freeExpr;
+      const fill = _taFreeExpr ? ['case', _taFreeExpr, TA_FREE_FILL, TA_PAID_FILL] : TA_STATIC_FILL;
+      const line = _taFreeExpr ? ['case', _taFreeExpr, TA_FREE_LINE, TA_PAID_LINE] : TA_STATIC_LINE;
+      // Valittu alue punaiseksi: ehto kääritään värilausekkeen ympärille, joten
+      // vain VÄRI vaihtuu — leveydet, tasot ja suodattimet pysyvät koskemattomina.
+      const hov = (c, base) => (focusHovId === null || focusHovId === undefined)
+        ? base : ['case', ['==', ['get','id'], focusHovId], c, base];
+      // Isolla aluekokonaisuudella täyttö jää värittömäksi (läpinäkyvä punainen),
+      // jolloin vain reunaviiva ja kaukoviiva muuttuvat punaisiksi.
+      const hovFill = focusHovLarge ? 'rgba(255, 23, 68, 0)' : FOCUS.hoverFillColor;
+      if (map.getLayer('master-poly-fill'))  map.setPaintProperty('master-poly-fill',  'fill-color', hov(hovFill, fill));
+      if (map.getLayer('master-poly-line'))  map.setPaintProperty('master-poly-line',  'line-color', hov(FOCUS.hoverColor, line));
       // Paksunnusviiva seuraa täytön väriä, jotta kaukaa näkyvä pilleri on
       // samaa väriä kuin alue lähellä.
-      if (map.getLayer('master-poly-boost'))      map.setPaintProperty('master-poly-boost', 'line-color', fill);
+      if (map.getLayer('master-poly-boost')) map.setPaintProperty('master-poly-boost', 'line-color', hov(FOCUS.hoverColor, fill));
     }
     // Parking garages (halli-icons) are paid parking, so they are shown only when
     // paid areas are shown — i.e. NOT in the free-only view, and NOT in the
@@ -13570,7 +13588,7 @@
     // "Näytä julkiset sähkölatauspisteet" toggle is on. Garages (halli-icons)
     // are handled separately by updateHalliVisibility(), since they also follow
     // the paid/free filter.
-    const PARKING_LAYER_IDS = ['master-poly-fill','master-poly-line','master-poly-boost','master-poly-hover-fill','master-poly-hover-line','map-dim'];
+    const PARKING_LAYER_IDS = ['master-poly-fill','master-poly-line','master-poly-boost','master-poly-sel-line','map-dim'];
     function setParkingLayersVisible(visible){
       PARKING_LAYER_IDS.forEach(id => {
         if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none');
@@ -13619,6 +13637,7 @@
             map.addSource('charging-points', { type: 'geojson', data: geojson });
             map.addLayer({
               id: 'charging-icons', type: 'symbol', source: 'charging-points', minzoom: 13, slot: 'top',
+              paint: { 'icon-opacity': iconFocusOpacity(focusHalliId), 'icon-opacity-transition': { duration: FOCUS.ms } },
               layout: {
                 'icon-image': ['step', ['zoom'], ['case', ['get','available'], 'charging-plain-green', 'charging-plain-gray'], 14, ['case', ['get','available'], 'charging-green', 'charging-gray']],
                 'icon-size': ['interpolate', ['linear'], ['zoom'], 13.99, 0.125, 14, 0.1875, 16, 0.3375], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-anchor': 'center'
