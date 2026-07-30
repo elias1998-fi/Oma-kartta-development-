@@ -7,7 +7,8 @@
   <meta http-equiv="Expires" content="0" />
   <!-- Varmistaa että origin-Referer lähetetään myös asennetussa PWA-tilassa,
        jotta URL-rajattu Mapbox-token toimii. Vaikuttaa vain cross-origin-
-       pyyntöihin; Digitransit-tiilet käyttävät transformRequest-otsaketta. -->
+       pyyntöihin. Digitransit-avain on yhä käytössä geokoodauksessa
+       (transformRequest-otsake), mutta taustakartta tulee nyt Mapboxilta. -->
   <meta name="referrer" content="origin-when-cross-origin" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="mobile-web-app-capable" content="yes" />
@@ -18,8 +19,11 @@
   <link rel="apple-touch-icon" href="icon.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="icon.png" />
   <title>TotalParking</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4/dist/maplibre-gl.css" />
-  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <!-- Taustakartta: Mapbox Standard. Standard on Mapboxin oma tyylipaketti
+       (imports + config), jota MapLibre ei osaa renderöidä, joten kartta-SDK on
+       Mapbox GL JS v3. Versio on pinnattu tarkoituksella — päivitä tietoisesti. -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.27.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.27.0/mapbox-gl.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
   <style>
     :root {
@@ -56,8 +60,12 @@
     /* Digitransit/HSL-tiilet: kirjaston oma attribuutiokontrolli piilotetaan, ja
        vaadittu "© OpenStreetMap" -maininta piirretään omana elementtinään
        sheetin yläreunaan (#osm-attribution). ÄLÄ poista sitä. */
-    .maplibregl-ctrl-attrib { display: none !important; }
-    .maplibregl-ctrl { display: none !important; }
+    /* HUOM: Mapboxin käyttöehdot edellyttävät, että Mapbox-logo ja
+       attribuutio ("© Mapbox © OpenStreetMap") ovat kartalla näkyvissä.
+       Nämä kaksi sääntöä piilottavat ne. Poista säännöt (ja map-optioista
+       attributionControl:false) ennen kuin sovellus julkaistaan. */
+    .mapboxgl-ctrl-attrib { display: none !important; }
+    .mapboxgl-ctrl { display: none !important; }
     /* ── Unified center marker ────────────────────────────────────────
        One element that morphs between two states:
        - Collapsed (default): just the P pin
@@ -202,7 +210,7 @@
 
     /* MapLibre DOM markers (e.g. the red search-result pin) sit below the
        P-marker so they can't peek out from behind it. */
-    .maplibregl-marker { z-index: 5; }
+    .mapboxgl-marker { z-index: 5; }
     
     /* Splash Screen */
     /* (Splash screen removed — app now opens directly to the map.) */
@@ -211,7 +219,7 @@
        MapLibre's native heading cone is hidden; we render our own arrow
        inside the user-location-dot, rotated via JS using DeviceOrientation
        data (after the user grants compass permission on iOS). */
-    .maplibregl-user-location-dot {
+    .mapboxgl-user-location-dot {
       background-color: #1e7cff !important;
       width: 22px !important;
       height: 22px !important;
@@ -219,8 +227,11 @@
       box-shadow: 0 0 0 1px rgba(0,0,0,0.15), 0 2px 6px rgba(0,0,0,0.25) !important;
       position: relative !important;
     }
-    /* Hide MapLibre's own cone-shaped heading indicator — we use our own */
-    .maplibregl-user-location-dot-heading { display: none !important; }
+    /* Piilotetaan SDK:n oma kartiomainen suuntaosoitin — käytetään omaa nuolta.
+       Mapbox nimeää sen .mapboxgl-user-location-heading, MapLibre nimesi sen
+       .maplibregl-user-location-dot-heading → katetaan molemmat nimet. */
+    .mapboxgl-user-location-heading,
+    .mapboxgl-user-location-dot-heading { display: none !important; }
     /* Custom direction arrow. Positioned dead-center over the user dot;
        a transform chain rotates first, then translates outward — so the
        arrow's base ends up flush against the dot's edge in the rotated
@@ -248,7 +259,7 @@
       display: none;
       transition: transform 0.12s linear;
     }
-    .maplibregl-user-location-dot.has-heading .user-dot-arrow {
+    .mapboxgl-user-location-dot.has-heading .user-dot-arrow {
       display: block;
     }
     
@@ -4423,27 +4434,23 @@
             <span class="ios-switch-track"></span>
           </label>
         </div>
-        <!-- Map style collapsible: header row shows the current style; tapping
-             opens a list of the three styles (Original / Tumma tila / Uusi tyyli).
-             Replaces the old boolean dark-mode switch. -->
+        <!-- Kartan teema: Mapbox Standardin lightPreset. Oletus on Yö (night),
+             Vaalea vastaa Standardin day-presetiä. Vaihto on config-arvo, ei
+             tyylinvaihto, joten kartan omat tasot eivät katoa. -->
         <div class="settings-row-toggle settings-mapstyle-header" onclick="toggleMapStyleRow()">
           <div class="settings-row-text">
             <div class="settings-row-title">Kartan tyyli</div>
           </div>
-          <div class="settings-mapstyle-current" id="setting-mapstyle-current">Original</div>
+          <div class="settings-mapstyle-current" id="setting-mapstyle-current">Yö</div>
           <div class="settings-mapstyle-chevron" id="setting-mapstyle-chevron">›</div>
         </div>
         <div class="settings-mapstyle-options" id="setting-mapstyle-options">
-          <div class="settings-mapstyle-option" data-style="original" onclick="selectMapStyle('original', this)">
-            <span>Original</span>
+          <div class="settings-mapstyle-option" data-style="night" onclick="selectMapTheme('night', this)">
+            <span>Yö</span>
             <span class="settings-mapstyle-check">✓</span>
           </div>
-          <div class="settings-mapstyle-option" data-style="dark" onclick="selectMapStyle('dark', this)">
-            <span>Tumma tila</span>
-            <span class="settings-mapstyle-check">✓</span>
-          </div>
-          <div class="settings-mapstyle-option" data-style="newstyle" onclick="selectMapStyle('newstyle', this)">
-            <span>Uusi tyyli</span>
+          <div class="settings-mapstyle-option" data-style="light" onclick="selectMapTheme('light', this)">
+            <span>Vaalea</span>
             <span class="settings-mapstyle-check">✓</span>
           </div>
         </div>
@@ -5737,6 +5744,12 @@
     // Niin kauan kuin arvo on paikkamerkki, satelliittinappi vain vilauttaa
     // ohjeen eikä yritä ladata tiiliä.
     const MAPBOX_TOKEN = 'pk.eyJ1IjoiZWxpYXMxOTk4IiwiYSI6ImNtcm9td3dwMzNlbmQyeHF6OGUzNDc5enYifQ.09UVfLxCbFdL633TWPvNiA';
+    // Token käytetään nyt KOKO taustakarttaan, ei vain satelliittirasteriin.
+    // MUISTA lisätä uuden repon osoite tokenin URL-rajaukseen:
+    //   account.mapbox.com -> Tokens -> (token) -> URL restrictions
+    //   https://elias1998-fi.github.io/Oma-kartta-development-/
+    // Ilman sitä Standard-tiilet palauttavat 401 eikä kartta piirry.
+    mapboxgl.accessToken = MAPBOX_TOKEN;
 
     // ── OpenStreetMap-rasteritiilet (karttatyylin "OSM"-tila) ──────────
     // Tämä on OSM:n oma vakiotyyli (sama ulkoasu kuin openstreetmap.org).
@@ -6058,38 +6071,72 @@
       console.warn('[share] could not parse URL params:', e);
     }
 
-    // Map style preference (persisted): 'original' | 'dark' | 'newstyle'.
-    // Chooses which style JSON to load. Migrates from the legacy boolean
-    // tp_darkmode key when tp_mapstyle hasn't been written yet.
-    const MAP_STYLE_URLS = {
-      original: 'omakartta_style.json',
-      dark:     'omakartta_style_darkmode.json',
-      newstyle: 'omakartta_style_newstyle.json'
-    };
-    const MAP_STYLE_LABELS = {
-      original: 'Original',
-      dark:     'Tumma tila',
-      newstyle: 'Uusi tyyli'
-    };
-    let mapStyleChoice = (function(){
+    // ── Taustakartta: Mapbox Standard ─────────────────────────────────
+    // Standard on yksi tyyli, jonka ulkoasua ohjataan config-arvoilla eikä
+    // erillisillä tyylitiedostoilla. Teema = lightPreset ('night' | 'day').
+    // Vaihto tapahtuu setConfigProperty()llä, EI setStylellä — omat lähteet,
+    // tasot ja ikonit säilyvät, joten teemanvaihto on välitön eikä vaadi
+    // reapplyMapLayers()-kierrosta.
+    //
+    // 3D on kytketty kokonaan pois: show3dObjects=false poistaa rakennukset,
+    // maamerkit ja puut, ja kamera on lukittu litteäksi (pitch 0, maxPitch 0,
+    // ei kiertoa). Projektio pakotetaan mercatoriin, koska GL JS v3 käyttää
+    // muuten globea pienillä zoomeilla.
+    const MAPBOX_STANDARD_STYLE = 'mapbox://styles/mapbox/standard';
+    const MAP_THEMES       = { night: 'night', light: 'day' };   // valinta -> lightPreset
+    const MAP_THEME_LABELS = { night: 'Yö',    light: 'Vaalea' };
+    const MAP_THEME_DEFAULT = 'night';
+    let mapThemeChoice = (function(){
       try {
-        const saved = localStorage.getItem('tp_mapstyle');
-        if (saved && MAP_STYLE_URLS[saved]) return saved;
-        return localStorage.getItem('tp_darkmode') === '1' ? 'dark' : 'original';
-      } catch(e){ return 'original'; }
+        const saved = localStorage.getItem('tp_maptheme');
+        if (saved && MAP_THEMES[saved]) return saved;
+      } catch(e){}
+      return MAP_THEME_DEFAULT;
     })();
-    const _mapStyleUrl = MAP_STYLE_URLS[mapStyleChoice];
-    const map = new maplibregl.Map({
+
+    // Asettaa Standardin config-arvot yhdelle kartalle. Turvallinen kutsua
+    // useasti ja ennen tyylin latautumista (kääritty try/catchiin, koska
+    // tuntematon avain heittää vanhemmilla Standard-versioilla).
+    function applyBasemapConfig(m, choice) {
+      if (!m || typeof m.setConfigProperty !== 'function') return;
+      const preset = MAP_THEMES[choice || mapThemeChoice] || 'night';
+      const set = (k, v) => { try { m.setConfigProperty('basemap', k, v); } catch(e){} };
+      set('lightPreset', preset);
+      set('show3dObjects', false);
+      // Yksittäiset 3D-tasot varmistuksena: uudemmissa Standard-versioissa
+      // show3dObjects on koontiavain, mutta nämä toimivat myös yksinään.
+      ['show3dBuildings','show3dTrees','show3dLandmarks','show3dFacades'].forEach(k => set(k, false));
+    }
+    // Kytkee kartan seuraamaan teemaa myös tyylin (uudelleen)latautuessa.
+    function bindBasemapConfig(m) {
+      if (!m) return;
+      applyBasemapConfig(m, mapThemeChoice);
+      try { m.on('style.load', () => applyBasemapConfig(m, mapThemeChoice)); } catch(e){}
+    }
+
+    const map = new mapboxgl.Map({
       container: 'map',
-      style: _mapStyleUrl,
+      accessToken: MAPBOX_TOKEN,
+      style: MAPBOX_STANDARD_STYLE,
+      config: { basemap: { lightPreset: MAP_THEMES[mapThemeChoice], show3dObjects: false } },
+      projection: 'mercator',
       center: _sharedInitialCenter || [24.932096, 60.167370],
       zoom:   _sharedInitialZoom   || 16,
       minZoom: 5, maxZoom: 20,
+      pitch: 0, maxPitch: 0, bearing: 0,
       transformRequest, maxTileCacheSize: 50, fadeDuration: 100,
       dragRotate: false, touchPitch: false, pitchWithRotate: false,
       keyboard: false, attributionControl: false, doubleClickZoom: false
     });
     map.touchZoomRotate.disableRotation();
+    bindBasemapConfig(map);
+
+    // moveLayer voi heittää slot-tasoilla, ja slotit takaavat järjestyksen jo
+    // itsessään (ikonit 'top', pysäköintialueet 'middle'), joten siirto on vain
+    // varmistus eikä sen epäonnistuminen saa kaataa mitään.
+    function safeMoveLayer(m, id) {
+      try { if (m && m.getLayer && m.getLayer(id)) m.moveLayer(id); } catch(e){}
+    }
 
     // Kartan sisäinen koko on pidettävä säiliön TODELLISEN koon mukaisena.
     // Pelkkä window-'resize' ei riitä: säiliö voi saada lopullisen kokonsa vasta
@@ -6280,7 +6327,7 @@
     // trackUserLocation:false → does not continuously follow the device.
     // We also do NOT auto-trigger on map load; the user must press the
     // location button (top-right) to fetch their current position.
-    const geolocate = new maplibregl.GeolocateControl({
+    const geolocate = new mapboxgl.GeolocateControl({
       positionOptions: { enableHighAccuracy: true },
       trackUserLocation: false,
       showUserHeading: true
@@ -6375,7 +6422,7 @@
       // Käsittele kaikki sijaintipisteet: perusnäkymän (GeolocateControl) sekä
       // hyväksymisnäkymän oma piste (ensureAdminUserDot), jotta suuntanuoli
       // näkyy molemmissa.
-      const dots = document.querySelectorAll('.maplibregl-user-location-dot');
+      const dots = document.querySelectorAll('.mapboxgl-user-location-dot');
       if (!dots.length) return false;
       dots.forEach(dot => {
         if (!dot.querySelector('.user-dot-arrow')) {
@@ -6394,7 +6441,7 @@
       // Order matters: center-then-rotate-then-push-outward. Result: the
       // triangle orbits around the dot's center, base on the dot's edge,
       // tip pointing away in the direction of the compass heading.
-      document.querySelectorAll('.maplibregl-user-location-dot .user-dot-arrow').forEach(arrow => {
+      document.querySelectorAll('.mapboxgl-user-location-dot .user-dot-arrow').forEach(arrow => {
         arrow.style.transform =
           `translate(-50%, -50%) rotate(${_currentHeading}deg) translateY(-22px)`;
       });
@@ -6687,7 +6734,7 @@
     let areaAddMode = false;      // midpoint-add mode (+ aktiivinen)
     let polygonMoved = false;     // tracks if any corner was dragged
     let polyPixelOffsets = null;  // polygonin muoto pikseleinä (näyttökoko), talteen muokattaessa; "Tuo polygoni" käyttää
-    let areaMapType = 0;            // 0 = HSL-vektori (oletus), 1 = OSM-rasteri, 2 = satelliitti
+    let areaMapType = 0;            // 0 = Mapbox Standard (oletus), 1 = OSM-rasteri, 2 = satelliitti
     let mapTypePending = false;     // karttatyylin vaihto odottaa tyylin latautumista
     let mapErrHooked = false;       // rasteritiilien error-kuuntelija liitetään vain kerran
 
@@ -6849,7 +6896,7 @@
       areaMarkers.forEach(m=>m.remove()); areaMarkers=[]; lockedPixelPos=[];
       areaCoords = coords.map(c=>[c[0],c[1]]);
       areaCoords.forEach(c=>{
-        const marker=new maplibregl.Marker({element:createCornerEl(),draggable:true,anchor:'center'}).setLngLat(c).addTo(areaMap);
+        const marker=new mapboxgl.Marker({element:createCornerEl(),draggable:true,anchor:'center'}).setLngLat(c).addTo(areaMap);
         setupMarkerEvents(marker); areaMarkers.push(marker);
         if(!areaLocked)lockedPixelPos.push(clampPixelPos(areaMap.project([c[0],c[1]])));
       });
@@ -6952,7 +6999,7 @@
       if (!areaMap || areaCoords.length < 3) return;
       // Siirtokahva (koko polygonin siirto) — polygonin KESKIPISTEESSÄ.
       // Sivukahvat pysyvät poistettuina; kulmapisteet toimivat normaalisti.
-      const ch = new maplibregl.Marker({element:createCenterHandleEl(), draggable:true, anchor:'center'}).setLngLat(_areaCentroid()).addTo(areaMap);
+      const ch = new mapboxgl.Marker({element:createCenterHandleEl(), draggable:true, anchor:'center'}).setLngLat(_areaCentroid()).addTo(areaMap);
       let cS=null, cSC=null;
       ch.on('dragstart', () => { pushAreaUndo(); cS=ch.getLngLat(); cSC=areaCoords.map(c=>[c[0],c[1]]); });
       ch.on('drag', () => {
@@ -7211,7 +7258,7 @@
         const next=areaCoords[(i+1)%n];
         const mid=[(coord[0]+next[0])/2,(coord[1]+next[1])/2];
         const el=createMidpointEl();
-        const marker=new maplibregl.Marker({element:el,anchor:'center',draggable:false}).setLngLat(mid).addTo(areaMap);
+        const marker=new mapboxgl.Marker({element:el,anchor:'center',draggable:false}).setLngLat(mid).addTo(areaMap);
         el.addEventListener('click',()=>{ insertCornerAt(i+1,mid); exitAddMode(); });
         midpointMarkers.push(marker);
       });
@@ -7223,7 +7270,7 @@
       areaCoords.splice(idx,0,coord);
       areaMarkers.forEach(m=>m.remove()); areaMarkers=[]; lockedPixelPos=[];
       areaCoords.forEach(c=>{
-        const marker=new maplibregl.Marker({element:createCornerEl(),draggable:true,anchor:'center'}).setLngLat(c).addTo(areaMap);
+        const marker=new mapboxgl.Marker({element:createCornerEl(),draggable:true,anchor:'center'}).setLngLat(c).addTo(areaMap);
         setupMarkerEvents(marker); areaMarkers.push(marker);
         if(!areaLocked)lockedPixelPos.push(clampPixelPos(areaMap.project([c[0],c[1]])));
       });
@@ -7243,7 +7290,7 @@
       if(!areaMap||areaCoords.length<3)return;
       clearMidpointHandles(); exitRemoveMode();
       const lngs=areaCoords.map(c=>c[0]), lats=areaCoords.map(c=>c[1]);
-      const bounds=new maplibregl.LngLatBounds([Math.min(...lngs),Math.min(...lats)],[Math.max(...lngs),Math.max(...lats)]);
+      const bounds=new mapboxgl.LngLatBounds([Math.min(...lngs),Math.min(...lats)],[Math.max(...lngs),Math.max(...lats)]);
       areaMap.fitBounds(bounds,{padding:80,duration:500,maxZoom:19});
     }
 
@@ -7292,7 +7339,7 @@
       areaCoords=[[c.lng-off,c.lat+off],[c.lng+off,c.lat+off],[c.lng+off,c.lat-off],[c.lng-off,c.lat-off]];
       addPolygonLayers();
       areaCoords.forEach(coord=>{
-        const marker=new maplibregl.Marker({element:createCornerEl(),draggable:true,anchor:'center'}).setLngLat(coord).addTo(areaMap);
+        const marker=new mapboxgl.Marker({element:createCornerEl(),draggable:true,anchor:'center'}).setLngLat(coord).addTo(areaMap);
         setupMarkerEvents(marker); areaMarkers.push(marker);
       });
       updateMinusBtn(); updateAddBtn();
@@ -7305,7 +7352,7 @@
         _adminEditPreloadCoords = null;
         addPolygonLayers();
         areaCoords.forEach(coord=>{
-          const marker=new maplibregl.Marker({element:createCornerEl(),draggable:true,anchor:'center'}).setLngLat(coord).addTo(areaMap);
+          const marker=new mapboxgl.Marker({element:createCornerEl(),draggable:true,anchor:'center'}).setLngLat(coord).addTo(areaMap);
           setupMarkerEvents(marker); areaMarkers.push(marker);
         });
         updateMinusBtn(); updateAddBtn(); capturePolyPixels();
@@ -7337,13 +7384,15 @@
 
     function initAreaMap() {
       const center=map.getCenter(), zoom=map.getZoom();
-      // Jokainen rajaussessio alkaa vektoritaustalla; molemmat haarat alla
-      // asettavat omakartta_style.json:n, joten nollataan lippu + nappi.
+      // Jokainen rajaussessio alkaa vektoritaustalla (Mapbox Standard), joten
+      // nollataan rasterilippu + nappi.
       areaMapType = 0; mapTypePending = false; updateMapTypeBtn();
       resetAreaMapLock();
       if(!areaMap){
-        areaMap=new maplibregl.Map({
-          container:'area-map', style:'omakartta_style.json',
+        areaMap=new mapboxgl.Map({
+          container:'area-map', accessToken:MAPBOX_TOKEN, style:MAPBOX_STANDARD_STYLE, projection:'mercator',
+          config:{ basemap:{ lightPreset: MAP_THEMES[mapThemeChoice], show3dObjects:false } },
+          pitch:0, maxPitch:0,
           center:[center.lng,center.lat], zoom,
           minZoom:5, maxZoom:20, transformRequest,
           dragRotate:false, touchPitch:false, pitchWithRotate:false,
@@ -7361,6 +7410,7 @@
           requestAnimationFrame(() => { if (areaMap) { areaMap.resize(); areaMap.triggerRepaint(); } });
         };
         areaMap.on('style.load', initOnce);
+        bindBasemapConfig(areaMap);
         areaMap.on('load', initOnce);
         // Kun polygoni on kiinnitetty näyttöön (lukko auki TAI rotaatio päällä),
         // otetaan sen nykyiset pikselipaikat talteen kartan liikkeen ALKAESSA.
@@ -7390,8 +7440,8 @@
       }
     }
 
-    // ── Karttatyylin vaihto rajausnäkymässä (HSL → OSM → satelliitti) ──
-    // Kolmiportainen nappi: 0 = HSL-vektori (oletus, nappi pois päältä),
+    // ── Karttatyylin vaihto rajausnäkymässä (Standard → OSM → satelliitti) ──
+    // Kolmiportainen nappi: 0 = Mapbox Standard (oletus, nappi pois päältä),
     // 1 = OpenStreetMap-rasteri (nappi aktiivinen, merkki "1"),
     // 2 = Mapbox-satelliitti (merkki "2"). OSM ja satelliitti ovat erillisiä
     // rasteritasoja vektorin PÄÄLLÄ mutta polygonin ALLA; vaihto on pelkkää
@@ -8233,7 +8283,7 @@
       if (ct) ct.textContent = rows.length + ' kpl alueita odottaa hyväksyntää';
     }
     // Oman sijainnin piste hyväksymisnäkymän kartalle — sama sininen piste (+
-    // suuntanuoli) kuin perusnäkymässä. Sama .maplibregl-user-location-dot
+    // suuntanuoli) kuin perusnäkymässä. Sama .mapboxgl-user-location-dot
     // -tyyli; piste pysyy sijainnissa vaikka karttaa siirretään alueeseen.
     let _adminUserDotMarker = null;
     function ensureAdminUserDot() {
@@ -8242,12 +8292,12 @@
       const lngLat = [userLocation.lon, userLocation.lat];
       if (!_adminUserDotMarker) {
         const el = document.createElement('div');
-        el.className = 'maplibregl-user-location-dot';
+        el.className = 'mapboxgl-user-location-dot';
         const arrow = document.createElement('div');
         arrow.className = 'user-dot-arrow';
         el.appendChild(arrow);
         if (_compassEnabled) el.classList.add('has-heading');
-        _adminUserDotMarker = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat(lngLat).addTo(adminPreviewMap);
+        _adminUserDotMarker = new mapboxgl.Marker({ element: el, anchor: 'center' }).setLngLat(lngLat).addTo(adminPreviewMap);
         if (_currentHeading != null && typeof applyHeadingToUserDot === 'function') applyHeadingToUserDot();
       } else {
         _adminUserDotMarker.setLngLat(lngLat);
@@ -8416,13 +8466,16 @@
       if (!adminPreviewMap) {
         const _ac = (typeof userLocation !== 'undefined' && userLocation) ? [userLocation.lon, userLocation.lat] : [24.9354, 60.1699];
         const _az = (typeof userLocation !== 'undefined' && userLocation) ? 16 : 14;
-        adminPreviewMap = new maplibregl.Map({
-          container: 'admin-preview-map',
-          style: 'omakartta_style.json',
+        adminPreviewMap = new mapboxgl.Map({
+          container: 'admin-preview-map', accessToken: MAPBOX_TOKEN,
+          style: MAPBOX_STANDARD_STYLE, projection: 'mercator',
+          config: { basemap:{ lightPreset: MAP_THEMES[mapThemeChoice], show3dObjects:false } },
+          pitch: 0, maxPitch: 0,
           center: _ac, zoom: _az,
           dragRotate: false, touchPitch: false, pitchWithRotate: false,
           keyboard: false, attributionControl: false, transformRequest, doubleClickZoom: false
         });
+        bindBasemapConfig(adminPreviewMap);
         adminPreviewMap.on('load', () => {
           // Kartta pysyvästi lukittu pohjoiseen tässä näkymässä.
           adminPreviewMap.touchZoomRotate.disableRotation();
@@ -9171,7 +9224,7 @@
         map.addSource('master-polygons', { type:'geojson', data: geojson, generateId: true });
 
         // Base fill layer
-        map.addLayer({ id:'master-poly-fill', type:'fill', source:'master-polygons', minzoom:13,
+        map.addLayer({ id:'master-poly-fill', type:'fill', source:'master-polygons', minzoom:13, slot:'middle',
           paint:{ 'fill-opacity': hlOpacity('baseFill'), 'fill-opacity-transition': { duration: 0 },
             'fill-color': ['match', ['get','source'],
               'community',          '#7ac66d',
@@ -9188,28 +9241,28 @@
           }
         });
         // Base line layer — 1 px musta reunaviiva kaikilla alueilla
-        map.addLayer({ id:'master-poly-line', type:'line', source:'master-polygons', minzoom:13,
+        map.addLayer({ id:'master-poly-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
           paint:{ 'line-width': 1.0, 'line-opacity': hlOpacity('baseLine'),
             'line-color': '#000000'
           }
         });
         // Hover fill — red, toggled via setFilter
-        map.addLayer({ id:'master-poly-hover-fill', type:'fill', source:'master-polygons', minzoom:13,
+        map.addLayer({ id:'master-poly-hover-fill', type:'fill', source:'master-polygons', minzoom:13, slot:'middle',
           paint:{ 'fill-color':'#5c7ad6', 'fill-opacity': hlOpacity('hoverFill') },
           filter:['==', ['get','id'], '__none__']
         });
         // Hover outline — on the red hovered area, toggled via setFilter
-        map.addLayer({ id:'master-poly-hover-line', type:'line', source:'master-polygons', minzoom:13,
+        map.addLayer({ id:'master-poly-hover-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
           paint:{ 'line-color':'#000000', 'line-width': 2.5, 'line-opacity': hlOpacity('hoverLine') },
           filter:['==', ['get','id'], '__none__']
         });
         // Group highlight line — thick dark, toggled via setFilter
-        map.addLayer({ id:'master-poly-group-line', type:'line', source:'master-polygons', minzoom:13,
+        map.addLayer({ id:'master-poly-group-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
           paint:{ 'line-color':'#0C0243', 'line-width': 1.25, 'line-opacity': hlOpacity('groupLine') },
           filter:['==', ['get','id'], '__none__']
         });
         // Same-group fill highlight — 50% opacity, same colors as base, toggled via setFilter
-        map.addLayer({ id:'master-poly-group-fill', type:'fill', source:'master-polygons', minzoom:13,
+        map.addLayer({ id:'master-poly-group-fill', type:'fill', source:'master-polygons', minzoom:13, slot:'middle',
           paint:{ 'fill-opacity': hlOpacity('groupFill'),
             'fill-color': ['match', ['get','source'],
               'community',          '#7ac66d',
@@ -9232,8 +9285,8 @@
         // The polygon layers were just added, which may have placed them on
         // top of the halli-icons layer. Promote halli icons to the very top
         // so the parking-hall pins always sit above the area polygons.
-        if (map.getLayer('halli-icons')) map.moveLayer('halli-icons');
-        if (map.getLayer('halli-hi-icon')) map.moveLayer('halli-hi-icon');
+        safeMoveLayer(map, 'halli-icons');
+        safeMoveLayer(map, 'halli-hi-icon');
 
         // Helper: centroid for polygon/multipolygon
         function getCentroid(geom) {
@@ -10104,13 +10157,13 @@
         map.getSource('halli-points').setData(geojson);
         // Make sure the icon layer stays on top of the polygon layers even
         // if polygons were re-added after the halli layer was first created.
-        if (map.getLayer('halli-icons')) map.moveLayer('halli-icons');
-        if (map.getLayer('halli-hi-icon')) map.moveLayer('halli-hi-icon');
+        safeMoveLayer(map, 'halli-icons');
+        safeMoveLayer(map, 'halli-hi-icon');
         return;
       }
       map.addSource('halli-points', { type:'geojson', data: geojson });
       map.addLayer({
-        id: 'halli-icons', type: 'symbol', source: 'halli-points', minzoom: 13,
+        id: 'halli-icons', type: 'symbol', source: 'halli-points', minzoom: 13, slot: 'top',
         layout: {
           'icon-image': ['step', ['zoom'], 'halli-plain', 14, 'halli-icon'],
           'icon-size': ['interpolate', ['linear'], ['zoom'], 13.99, 0.25, 14, 0.675],
@@ -10124,11 +10177,11 @@
       // Promote the halli icons to the very top so they always sit on
       // top of the parking-area polygons (otherwise the polygon fills
       // partially cover the icons at higher zoom levels).
-      map.moveLayer('halli-icons');
+      safeMoveLayer(map, 'halli-icons');
       // Suurennettu, punareunainen ikoni valitulle hallille (ikonien PÄÄLLE).
       if (!map.getLayer('halli-hi-icon')) {
         map.addLayer({
-          id: 'halli-hi-icon', type: 'symbol', source: 'halli-points', minzoom: 13,
+          id: 'halli-hi-icon', type: 'symbol', source: 'halli-points', minzoom: 13, slot: 'top',
           filter: _hiNone,
           layout: {
             'icon-image': ['step', ['zoom'], 'halli-plain-hi', 14, 'halli-icon-hi'],
@@ -10137,7 +10190,7 @@
           }
         });
       }
-      if (map.getLayer('halli-hi-icon')) map.moveLayer('halli-hi-icon');
+      safeMoveLayer(map, 'halli-hi-icon');
       // Garages are paid parking → follow the paid/free + charging-only filters.
       updateHalliVisibility();
 
@@ -10352,12 +10405,15 @@
     }
     async function initEditorMap() {
       if (!editorMap) {
-        editorMap = new maplibregl.Map({
-          container:'editor-map', style:'omakartta_style.json',
+        editorMap = new mapboxgl.Map({
+          container:'editor-map', accessToken:MAPBOX_TOKEN, style:MAPBOX_STANDARD_STYLE, projection:'mercator',
+          config:{ basemap:{ lightPreset: MAP_THEMES[mapThemeChoice], show3dObjects:false } },
+          pitch:0, maxPitch:0,
           center:map.getCenter(), zoom:map.getZoom(),
           minZoom:5, maxZoom:20, transformRequest,
           dragRotate:false, attributionControl:false, doubleClickZoom:false
         });
+        bindBasemapConfig(editorMap);
         editorMap.on('load', async () => {
           editorMap.touchZoomRotate.disableRotation();
           await loadEditorFeatures();
@@ -11681,11 +11737,13 @@
         }
       }
     }
-    // ── Map style switch (Original / Tumma tila / Uusi tyyli): swap the map
-    //    style JSON. setStyle() wipes all custom sources
-    //    and layers, so once the new style has loaded we re-add them from cached
-    //    data (parking polygons, halli icons, charging icons). Everything else in
-    //    the app is unaffected. ──
+    // ── Omien tasojen uudelleenrakennus setStylen jälkeen ──────────────
+    // EI ENÄÄ KÄYTÖSSÄ teemanvaihdossa: yö/vaalea on pelkkä Standardin
+    // lightPreset-config, joka ei kosketa omia lähteitä eikä tasoja.
+    // Funktio on jätetty paikalleen sitä varten, jos taustatyyli joskus
+    // oikeasti vaihdetaan setStylellä — silloin kaikki omat lähteet, tasot ja
+    // rekisteröidyt ikonikuvat katoavat ja ne on rakennettava välimuistista
+    // uudelleen (pysäköintipolygonit, halli-ikonit, latauspisteikonit). ──
     function reapplyMapLayers() {
       // Clean slate: remove any custom layers/sources that survived the style
       // switch. Otherwise a lingering source sends renderMasterRows/addHalliLayers
@@ -11730,42 +11788,34 @@
       const isOpen = hdr.classList.toggle('open');
       opts.classList.toggle('open', isOpen);
     }
-    function selectMapStyle(choice, el) {
-      if (!MAP_STYLE_URLS[choice]) return;
-      // Update the header's "current style" label + row checkmarks
+    // Teeman vaihto: pelkkä Standardin lightPreset-config. Ei setStyleä, joten
+    // omat lähteet, tasot ja ikonit säilyvät eikä reapplyMapLayers() tarvita.
+    // (reapplyMapLayers on jätetty paikalleen — sitä tarvitaan yhä jos tyyli
+    // joskus vaihdetaan oikeasti toiseen setStylellä.)
+    function selectMapTheme(choice, el) {
+      if (!MAP_THEMES[choice]) return;
       const current = document.getElementById('setting-mapstyle-current');
-      if (current) current.textContent = MAP_STYLE_LABELS[choice];
+      if (current) current.textContent = MAP_THEME_LABELS[choice];
       document.querySelectorAll('#setting-mapstyle-options .settings-mapstyle-option').forEach(o => {
         o.classList.toggle('selected', o.dataset.style === choice);
       });
-      if (choice === mapStyleChoice) return; // already active — nothing to swap
-      mapStyleChoice = choice;
-      try {
-        localStorage.setItem('tp_mapstyle', choice);
-        // Keep the legacy boolean in sync so an older build (which only knows
-        // tp_darkmode) still opens with the expected base if rolled back.
-        localStorage.setItem('tp_darkmode', choice === 'dark' ? '1' : '0');
-      } catch(e){}
-      // setStyle() wipes ALL custom sources, layers and images. Re-add them once
-      // the new style is ready. 'style.load' can be missed, so we also poll
-      // isStyleLoaded() and keep a timeout fallback; a guard prevents double runs.
-      let _reapplied = false;
-      const doReapply = () => {
-        if (_reapplied) return;
-        if (!map.isStyleLoaded()) { setTimeout(doReapply, 60); return; }
-        _reapplied = true;
-        reapplyMapLayers();
-      };
-      map.once('style.load', doReapply);
-      map.setStyle(MAP_STYLE_URLS[choice], { diff: false });
-      setTimeout(doReapply, 400);
+      if (choice === mapThemeChoice) return;
+      mapThemeChoice = choice;
+      try { localStorage.setItem('tp_maptheme', choice); } catch(e){}
+      // Kaikki kartat samaan teemaan (sivukartat voivat olla vielä luomatta).
+      [ map,
+        (typeof areaMap          !== 'undefined') ? areaMap          : null,
+        (typeof editorMap        !== 'undefined') ? editorMap        : null,
+        (typeof adminPreviewMap  !== 'undefined') ? adminPreviewMap  : null,
+        (typeof locEditMap       !== 'undefined') ? locEditMap       : null
+      ].forEach(m => applyBasemapConfig(m, choice));
     }
-    // Reflect the saved map style in the settings selector on startup.
+    // Näytä tallennettu teema asetusvalitsimessa käynnistyksessä.
     (function(){
       const current = document.getElementById('setting-mapstyle-current');
-      if (current) current.textContent = MAP_STYLE_LABELS[mapStyleChoice] || 'Original';
+      if (current) current.textContent = MAP_THEME_LABELS[mapThemeChoice] || 'Yö';
       document.querySelectorAll('#setting-mapstyle-options .settings-mapstyle-option').forEach(o => {
-        o.classList.toggle('selected', o.dataset.style === mapStyleChoice);
+        o.classList.toggle('selected', o.dataset.style === mapThemeChoice);
       });
     })();
 
@@ -12320,16 +12370,19 @@
         const el = document.createElement('img');
         el.src = (typeof chargingIconSvg === 'function') ? chargingIconSvg('#008151') : '';
         el.style.cssText = 'width:30px;height:30px;display:block;';
-        _locEditOrigMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        _locEditOrigMarker = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([center.lng, center.lat]).addTo(locEditMap);
       };
       if (!locEditMap) {
-        locEditMap = new maplibregl.Map({
-          container: 'loc-edit-map', style: 'omakartta_style.json',
+        locEditMap = new mapboxgl.Map({
+          container: 'loc-edit-map', accessToken: MAPBOX_TOKEN, style: MAPBOX_STANDARD_STYLE, projection: 'mercator',
+          config: { basemap:{ lightPreset: MAP_THEMES[mapThemeChoice], show3dObjects:false } },
+          pitch: 0, maxPitch: 0,
           center: [center.lng, center.lat], zoom: zoom,
           minZoom: 5, maxZoom: 20, transformRequest,
           dragRotate: false, attributionControl: false, doubleClickZoom: false
         });
+        bindBasemapConfig(locEditMap);
         locEditMap.on('load', () => {
           locEditMap.touchZoomRotate.disableRotation();
           locEditMap.resize();
@@ -12357,7 +12410,7 @@
         const el = document.createElement('img');
         el.src = (typeof chargingIconSvg === 'function') ? chargingIconSvg('#ff8c00') : '';
         el.style.cssText = 'width:34px;height:34px;display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.4));';
-        _locEditNewMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        _locEditNewMarker = new mapboxgl.Marker({ element: el, anchor: 'center' })
           .setLngLat([c.lng, c.lat]).addTo(locEditMap);
         const pin = document.getElementById('loc-edit-center-pin');
         if (pin) pin.style.display = 'none';
@@ -12949,7 +13002,7 @@
       const onMoveEnd = () => {
         map.off('moveend', onMoveEnd);
         const markerElement = createPinElement();
-        currentMarker = new maplibregl.Marker({
+        currentMarker = new mapboxgl.Marker({
           element: markerElement,
           anchor: 'bottom'
         })
@@ -13500,7 +13553,7 @@
           } else {
             map.addSource('charging-points', { type: 'geojson', data: geojson });
             map.addLayer({
-              id: 'charging-icons', type: 'symbol', source: 'charging-points', minzoom: 13,
+              id: 'charging-icons', type: 'symbol', source: 'charging-points', minzoom: 13, slot: 'top',
               layout: {
                 'icon-image': ['step', ['zoom'], ['case', ['get','available'], 'charging-plain-green', 'charging-plain-gray'], 14, ['case', ['get','available'], 'charging-green', 'charging-gray']],
                 'icon-size': ['interpolate', ['linear'], ['zoom'], 13.99, 0.125, 14, 0.1875, 16, 0.3375], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-anchor': 'center'
@@ -13511,7 +13564,7 @@
             const _chNone = ['==', ['get','id'], '__tp_none__'];
             if (!map.getLayer('charging-hi-icon')) {
               map.addLayer({
-                id: 'charging-hi-icon', type: 'symbol', source: 'charging-points', minzoom: 13,
+                id: 'charging-hi-icon', type: 'symbol', source: 'charging-points', minzoom: 13, slot: 'top',
                 filter: _chNone,
                 layout: {
                   'icon-image': ['step', ['zoom'], ['case', ['get','available'], 'charging-plain-green-hi', 'charging-plain-gray-hi'], 14, ['case', ['get','available'], 'charging-green-hi', 'charging-gray-hi']],
@@ -13519,7 +13572,7 @@
                 }
               });
             }
-            if (map.getLayer('charging-hi-icon')) map.moveLayer('charging-hi-icon');
+            safeMoveLayer(map, 'charging-hi-icon');
             // Tap a charging marker → leave filter view, zoom to 16 centred on
             // the station, and show its details in the sheet (like halli markers).
             // Guarded so a dark-mode style switch re-adding the layer doesn't
@@ -13541,8 +13594,8 @@
             }
           }
           setChargingVisibility(showEvCharging);
-          if (map.getLayer('charging-icons')) map.moveLayer('charging-icons');
-          if (map.getLayer('charging-hi-icon')) map.moveLayer('charging-hi-icon');
+          safeMoveLayer(map, 'charging-icons');
+          safeMoveLayer(map, 'charging-hi-icon');
         });
       });
           });
@@ -17175,7 +17228,7 @@
           <ellipse cx="12" cy="33" rx="2" ry="1.5" fill="#333" opacity="0.4"/>
         </svg>`;
       outer.appendChild(inner);
-      _destinationPinMarker = new maplibregl.Marker({ element: outer, anchor: 'bottom' })
+      _destinationPinMarker = new mapboxgl.Marker({ element: outer, anchor: 'bottom' })
         .setLngLat([lng, lat])
         .addTo(map);
       _destinationCoords = { lat, lng };
