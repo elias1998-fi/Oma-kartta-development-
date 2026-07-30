@@ -6083,6 +6083,18 @@
     // ei kiertoa). Projektio pakotetaan mercatoriin, koska GL JS v3 käyttää
     // muuten globea pienillä zoomeilla.
     const MAPBOX_STANDARD_STYLE = 'mapbox://styles/mapbox/standard';
+
+    // ── Omien tasojen kirkkaus Standardin 3D-valaistuksessa ───────────
+    // Standard valaisee KOKO kartan, myös itse lisätyt tasot. Yön presetissä
+    // valo on himmeä, joten fill- ja line-tasot piirtyvät oletuksena selvästi
+    // tummempina kuin annettu väri (SDK:n oletus *-emissive-strength = 0 =
+    // täysin valaistuksen armoilla). Arvo 1 = taso hohtaa täydellä voimalla eli
+    // väri näkyy täsmälleen sellaisena kuin se on kirjoitettu, teemasta
+    // riippumatta. Tämä on syy siihen miksi #7ac66d ja #5c7ad6 näyttivät
+    // sameilta yötilassa. Symbolitasoja (halli-/latauspisteikonit) ei tarvitse
+    // koskea: icon-emissive-strength on jo oletuksena 1.
+    // Laske arvoa, jos haluat alueiden mukautuvan vuorokaudenaikaan.
+    const TP_EMISSIVE = 1;
     const MAP_THEMES       = { night: 'night', light: 'day' };   // valinta -> lightPreset
     const MAP_THEME_LABELS = { night: 'Yö',    light: 'Vaalea' };
     const MAP_THEME_DEFAULT = 'night';
@@ -6765,10 +6777,10 @@
       const before = areaMap.getLayer('area-poly-fill') ? 'area-poly-fill' : undefined;
       if (!areaMap.getLayer('existing-areas-fill'))
         areaMap.addLayer({ id:'existing-areas-fill', type:'fill', source:'existing-areas',
-          paint:{ 'fill-opacity':0.15, 'fill-color':'#0C0243' } }, before);   // harmaa täyttö kuten muokattava polygoni
+          paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-opacity':0.15, 'fill-color':'#0C0243' } }, before);   // harmaa täyttö kuten muokattava polygoni
       if (!areaMap.getLayer('existing-areas-line'))
         areaMap.addLayer({ id:'existing-areas-line', type:'line', source:'existing-areas',
-          paint:{ 'line-width':1.0, 'line-opacity':0.6, 'line-color':'#000' } }, before);   // ohut musta reuna (kuten perusnäkymän pysäköintipolygonit)
+          paint:{ 'line-emissive-strength': TP_EMISSIVE, 'line-width':1.0, 'line-opacity':0.6, 'line-color':'#000' } }, before);   // ohut musta reuna (kuten perusnäkymän pysäköintipolygonit)
     }
     function addPolygonLayers() {
       if (!areaMap) return;
@@ -6779,9 +6791,9 @@
         areaMap.getSource('area-poly').setData(getAreaGeoJSON());
       }
       if (!areaMap.getLayer('area-poly-fill'))
-        areaMap.addLayer({ id:'area-poly-fill', type:'fill', source:'area-poly', paint:{'fill-color':'#f39c12','fill-opacity':0.18} });
+        areaMap.addLayer({ id:'area-poly-fill', type:'fill', source:'area-poly', paint:{ 'fill-emissive-strength': TP_EMISSIVE,'fill-color':'#f39c12','fill-opacity':0.18} });
       if (!areaMap.getLayer('area-poly-line'))
-        areaMap.addLayer({ id:'area-poly-line', type:'line', source:'area-poly', paint:{'line-color':'#e67e22','line-width':2.5,'line-opacity':0.95} });
+        areaMap.addLayer({ id:'area-poly-line', type:'line', source:'area-poly', paint:{ 'line-emissive-strength': TP_EMISSIVE,'line-color':'#e67e22','line-width':2.5,'line-opacity':0.95} });
       applyMapType();   // varmistaa OSM/satelliitti-tasot ja näyttää oikean nykyisen tilan mukaan
     }
 
@@ -7486,7 +7498,7 @@
         });
       }
       if (!areaMap.getLayer('osm-raster')) {
-        areaMap.addLayer({ id:'osm-raster', type:'raster', source:'osm-raster', layout:{ visibility:'none' } }, beforeId);
+        areaMap.addLayer({ id:'osm-raster', paint:{ 'raster-emissive-strength': TP_EMISSIVE }, type:'raster', source:'osm-raster', layout:{ visibility:'none' } }, beforeId);
       }
       // Satelliitti (Mapbox) — vain jos token on asetettu.
       if (MAPBOX_TOKEN && MAPBOX_TOKEN.indexOf('TÄHÄN') === -1) {
@@ -7498,7 +7510,7 @@
           });
         }
         if (!areaMap.getLayer('mapbox-sat')) {
-          areaMap.addLayer({ id:'mapbox-sat', type:'raster', source:'mapbox-sat', layout:{ visibility:'none' } }, beforeId);
+          areaMap.addLayer({ id:'mapbox-sat', paint:{ 'raster-emissive-strength': TP_EMISSIVE }, type:'raster', source:'mapbox-sat', layout:{ visibility:'none' } }, beforeId);
         }
       }
       hookAreaSat();
@@ -8522,9 +8534,9 @@
       adminPreviewMap.addSource('admin-master', { type:'geojson', data: fc });
       const before = adminPreviewMap.getLayer('admin-sub-fill') ? 'admin-sub-fill' : undefined;
       adminPreviewMap.addLayer({ id:'admin-master-fill', type:'fill', source:'admin-master',
-        paint:{ 'fill-opacity':0.15, 'fill-color':'#0C0243' } }, before);   // harmaa täyttö kuten muokattava polygoni
+        paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-opacity':0.15, 'fill-color':'#0C0243' } }, before);   // harmaa täyttö kuten muokattava polygoni
       adminPreviewMap.addLayer({ id:'admin-master-line', type:'line', source:'admin-master',
-        paint:{ 'line-width':1.0, 'line-opacity':0.6, 'line-color':'#000' } }, before);   // ohut musta reuna (kuten perusnäkymän pysäköintipolygonit)
+        paint:{ 'line-emissive-strength': TP_EMISSIVE, 'line-width':1.0, 'line-opacity':0.6, 'line-color':'#000' } }, before);   // ohut musta reuna (kuten perusnäkymän pysäköintipolygonit)
     }
     function adminSetAreas(fc) {
       ['admin-sub-fill','admin-sub-line'].forEach(id => { if (adminPreviewMap.getLayer(id)) adminPreviewMap.removeLayer(id); });
@@ -8532,9 +8544,9 @@
       if (!fc.features.length) return;
       adminPreviewMap.addSource('admin-sub', { type:'geojson', data: fc });
       adminPreviewMap.addLayer({ id:'admin-sub-fill', type:'fill', source:'admin-sub',
-        paint:{'fill-color':'#f39c12','fill-opacity':0.35} });
+        paint:{ 'fill-emissive-strength': TP_EMISSIVE,'fill-color':'#f39c12','fill-opacity':0.35} });
       adminPreviewMap.addLayer({ id:'admin-sub-line', type:'line', source:'admin-sub',
-        paint:{'line-color':'#e67e22','line-width':3,'line-opacity':1} });
+        paint:{ 'line-emissive-strength': TP_EMISSIVE,'line-color':'#e67e22','line-width':3,'line-opacity':1} });
     }
 
     function adminFitTo(fc) {
@@ -9225,7 +9237,7 @@
 
         // Base fill layer
         map.addLayer({ id:'master-poly-fill', type:'fill', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'fill-opacity': hlOpacity('baseFill'), 'fill-opacity-transition': { duration: 0 },
+          paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-opacity': hlOpacity('baseFill'), 'fill-opacity-transition': { duration: 0 },
             'fill-color': ['match', ['get','source'],
               'community',          '#7ac66d',
               'hel_ilmainen_pitka', '#7ac66d',
@@ -9242,28 +9254,28 @@
         });
         // Base line layer — 1 px musta reunaviiva kaikilla alueilla
         map.addLayer({ id:'master-poly-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'line-width': 1.0, 'line-opacity': hlOpacity('baseLine'),
+          paint:{ 'line-emissive-strength': TP_EMISSIVE, 'line-width': 1.0, 'line-opacity': hlOpacity('baseLine'),
             'line-color': '#000000'
           }
         });
         // Hover fill — red, toggled via setFilter
         map.addLayer({ id:'master-poly-hover-fill', type:'fill', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'fill-color':'#5c7ad6', 'fill-opacity': hlOpacity('hoverFill') },
+          paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-color':'#5c7ad6', 'fill-opacity': hlOpacity('hoverFill') },
           filter:['==', ['get','id'], '__none__']
         });
         // Hover outline — on the red hovered area, toggled via setFilter
         map.addLayer({ id:'master-poly-hover-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'line-color':'#000000', 'line-width': 2.5, 'line-opacity': hlOpacity('hoverLine') },
+          paint:{ 'line-emissive-strength': TP_EMISSIVE, 'line-color':'#000000', 'line-width': 2.5, 'line-opacity': hlOpacity('hoverLine') },
           filter:['==', ['get','id'], '__none__']
         });
         // Group highlight line — thick dark, toggled via setFilter
         map.addLayer({ id:'master-poly-group-line', type:'line', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'line-color':'#0C0243', 'line-width': 1.25, 'line-opacity': hlOpacity('groupLine') },
+          paint:{ 'line-emissive-strength': TP_EMISSIVE, 'line-color':'#0C0243', 'line-width': 1.25, 'line-opacity': hlOpacity('groupLine') },
           filter:['==', ['get','id'], '__none__']
         });
         // Same-group fill highlight — 50% opacity, same colors as base, toggled via setFilter
         map.addLayer({ id:'master-poly-group-fill', type:'fill', source:'master-polygons', minzoom:13, slot:'middle',
-          paint:{ 'fill-opacity': hlOpacity('groupFill'),
+          paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-opacity': hlOpacity('groupFill'),
             'fill-color': ['match', ['get','source'],
               'community',          '#7ac66d',
               'hel_ilmainen_pitka', '#7ac66d',
@@ -10472,7 +10484,7 @@
       } else {
         editorMap.addSource('editor-all', { type:'geojson', data: geojson });
         editorMap.addLayer({ id:'editor-fill', type:'fill', source:'editor-all', minzoom:13,
-          paint:{ 'fill-opacity':1,
+          paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-opacity':1,
             'fill-color': ['match', ['get','source'],
               'community',          '#7ac66d',
               'hel_ilmainen_pitka', '#7ac66d',
@@ -10483,31 +10495,31 @@
           }
         });
         editorMap.addLayer({ id:'editor-line', type:'line', source:'editor-all', minzoom:13,
-          paint:{ 'line-width':1, 'line-color':'#000000'
+          paint:{ 'line-emissive-strength': TP_EMISSIVE, 'line-width':1, 'line-color':'#000000'
           }
         });
         editorMap.addLayer({ id:'editor-sel-fill', type:'fill', source:'editor-all', minzoom:13,
-          paint:{ 'fill-color':'#0C0243','fill-opacity':0.6 },
+          paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-color':'#0C0243','fill-opacity':0.6 },
           filter:['in',['get','id'],['literal',[]]] });
         editorMap.addLayer({ id:'editor-sel-line', type:'line', source:'editor-all', minzoom:13,
-          paint:{ 'line-color':'#0C0243','line-width':2.5 },
+          paint:{ 'line-emissive-strength': TP_EMISSIVE, 'line-color':'#0C0243','line-width':2.5 },
           filter:['in',['get','id'],['literal',[]]] });
         // Preview layer
         editorMap.addSource('editor-preview', { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
         editorMap.addLayer({ id:'editor-preview-fill', type:'fill', source:'editor-preview',
-          paint:{ 'fill-color':'#FFD600','fill-opacity':0.55 } });
+          paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-color':'#FFD600','fill-opacity':0.55 } });
         editorMap.addLayer({ id:'editor-preview-line', type:'line', source:'editor-preview',
-          paint:{ 'line-color':'#F9A825','line-width':3 } });
+          paint:{ 'line-emissive-strength': TP_EMISSIVE, 'line-color':'#F9A825','line-width':3 } });
         // Delete highlight
         editorMap.addLayer({ id:'editor-del-fill', type:'fill', source:'editor-all', minzoom:13,
-          paint:{ 'fill-color':'#e53935','fill-opacity':0.6 },
+          paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-color':'#e53935','fill-opacity':0.6 },
           filter:['==','id','__none__'] });
         // Reject flash (incompatible area blink)
         editorMap.addLayer({ id:'editor-reject-fill', type:'fill', source:'editor-all', minzoom:13,
-          paint:{ 'fill-color':'#e53935','fill-opacity':0.75 },
+          paint:{ 'fill-emissive-strength': TP_EMISSIVE, 'fill-color':'#e53935','fill-opacity':0.75 },
           filter:['==','id','__none__'] });
         editorMap.addLayer({ id:'editor-reject-line', type:'line', source:'editor-all', minzoom:13,
-          paint:{ 'line-color':'#e53935','line-width':3 },
+          paint:{ 'line-emissive-strength': TP_EMISSIVE, 'line-color':'#e53935','line-width':3 },
           filter:['==','id','__none__'] });
       }
       updateEditorUI();
